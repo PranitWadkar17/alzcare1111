@@ -14,17 +14,17 @@ interface AuthContextType extends AuthState {
   // Caregiver password flow
   signUpCaregiver: (data: RegisterData) => Promise<void>;
   signInCaregiver: (email: string, password: string) => Promise<void>;
-  
+
   // 2FA
   verify2FA: (email: string, token: string) => Promise<void>;
-  
+
   // Common
   signOut: () => Promise<void>;
   checkAccountLock: (email: string) => Promise<{ locked: boolean; until?: string }>;
-  
+
   // Session management
   updateLastActivity: () => void;
-  
+
   // Remember email
   getRememberedEmail: () => string | null;
   setRememberEmail: (email: string, remember: boolean) => void;
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Initialize auth state
   useEffect(() => {
     checkSession();
-    
+
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
@@ -82,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const interval = setInterval(() => {
       const inactiveTime = Date.now() - lastActivity;
       const timeoutMs = SESSION_TIMEOUT_MINUTES * 60 * 1000;
-      
+
       if (inactiveTime > timeoutMs) {
         signOut();
         setSessionExpired(true);
@@ -97,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated) return;
 
     const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
-    
+
     const updateActivity = () => {
       setLastActivity(Date.now());
     };
@@ -116,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const checkSession = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (session?.user) {
         setUser(session.user);
         await fetchProfile(session.user.id);
@@ -162,7 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setProfile(profileData);
         setRole(profileData.role);
-        
+
         // Update last login
         await supabase
           .from('profiles')
@@ -220,10 +220,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
         const lockedUntil = new Date();
         lockedUntil.setMinutes(lockedUntil.getMinutes() + LOCK_DURATION_MINUTES);
-        
+
         await supabase
           .from('profiles')
-          .update({ 
+          .update({
             login_attempts: newAttempts,
             locked_until: lockedUntil.toISOString()
           })
@@ -244,7 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await supabase
         .from('profiles')
-        .update({ 
+        .update({
           login_attempts: 0,
           locked_until: null
         })
@@ -260,14 +260,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Check if account is locked
       const lockStatus = await checkAccountLock(email);
       if (lockStatus.locked) {
-        return { 
-          success: false, 
-          message: `Account locked. Try again after ${new Date(lockStatus.until!).toLocaleTimeString()}` 
+        return {
+          success: false,
+          message: `Account locked. Try again after ${new Date(lockStatus.until!).toLocaleTimeString()}`
         };
       }
 
       // Check if user exists and is patient
-            if (isRegistration) {
+      if (isRegistration) {
         // REGISTRATION — check email is NOT already taken
         const { data: existingProfile } = await supabase
           .from('profiles')
@@ -332,50 +332,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data.user) {
-  // Check if profile exists
-  const { data: existingProfile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', data.user.id)
-    .single();
+        // Check if profile exists
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
 
-  // LOGIN PATH — profile must already exist
-  if (!existingProfile && !userData) {
-    // User authenticated in Supabase Auth but has no profile
-    // Sign them out immediately to avoid broken state
-    await supabase.auth.signOut();
-    throw new Error('No account found for this email. Please register first.');
-  }
+        // LOGIN PATH — profile must already exist
+        if (!existingProfile && !userData) {
+          // User authenticated in Supabase Auth but has no profile
+          // Sign them out immediately to avoid broken state
+          await supabase.auth.signOut();
+          throw new Error('No account found for this email. Please register first.');
+        }
 
-  // REGISTER PATH — create profile with provided userData
-  if (!existingProfile && userData) {
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .insert({
-        id: data.user.id,
-        email,
-        name: userData.name,
-        role: 'patient',
-        phone: userData.phone,
-        two_factor_enabled: false,
-        login_attempts: 0,
-        language: 'en',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+        // REGISTER PATH — create profile with provided userData
+        if (!existingProfile && userData) {
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .insert({
+              id: data.user.id,
+              email,
+              name: userData.name,
+              role: 'patient',
+              phone: userData.phone,
+              two_factor_enabled: false,
+              login_attempts: 0,
+              language: 'en',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
 
-    if (profileError) {
-      await supabase.auth.signOut();
-      throw profileError;
-    }
-  }
+          if (profileError) {
+            await supabase.auth.signOut();
+            throw profileError;
+          }
+        }
 
-  // Both paths — complete login
-  await resetLoginAttempts(email);
-  setUser(data.user);
-  await fetchProfile(data.user.id);
-  await sendLoginNotification(email);
-}
+        // Both paths — complete login
+        await resetLoginAttempts(email);
+        setUser(data.user);
+        await fetchProfile(data.user.id);
+        await sendLoginNotification(email);
+      }
     } catch (error: any) {
       throw new Error(error.message || 'Invalid OTP.');
     }
@@ -470,22 +470,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(`Account locked. Try again after ${new Date(lockStatus.until!).toLocaleTimeString()}`);
       }
 
-      // Check if user is caregiver
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role, two_factor_enabled')
-        .eq('email', email)
-        .single();
-
-      if (!profile) {
-        throw new Error('Email not registered.');
-      }
-
-      if (profile.role === 'patient') {
-        throw new Error('This email is registered as a patient. Use patient login.');
-      }
-
-      // Sign in with password
+      // 1. Sign in with password FIRST to get auth context
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -496,18 +481,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw error;
       }
 
-      if (data.user) {
-        // Reset login attempts
-        await resetLoginAttempts(email);
-
-        // Check if 2FA enabled
-        
-
-        // Complete login
-        setUser(data.user);
-        await fetchProfile(data.user.id);
-        await sendLoginNotification(email);
+      if (!data.user) {
+        throw new Error('Authentication failed.');
       }
+
+      // 2. NOW check if user is caregiver (we are authenticated now, so RLS allows reading our own profile)
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role, two_factor_enabled')
+        .eq('id', data.user.id)
+        .single();
+
+      if (profileError || !profile) {
+        await supabase.auth.signOut();
+        throw new Error('Profile not found.');
+      }
+
+      if (profile.role === 'patient') {
+        await supabase.auth.signOut();
+        throw new Error('This email is registered as a patient. Use patient login.');
+      }
+
+      // Complete login
+      await resetLoginAttempts(email);
+      setUser(data.user);
+      await fetchProfile(data.user.id);
+      await sendLoginNotification(email);
     } catch (error: any) {
       throw new Error(error.message || 'Invalid credentials.');
     }
@@ -527,7 +526,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) throw error;
 
       // Complete login
-            if (pendingUser) {
+      if (pendingUser) {
         setUser(pendingUser);
         await fetchProfile(pendingUser.id);
         await sendLoginNotification(email);
@@ -545,7 +544,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await fetch('/api/auth/login-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           email,
           timestamp: new Date().toISOString(),
           userAgent: navigator.userAgent,
@@ -579,7 +578,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const setRememberEmail = (email: string, remember: boolean) => {
     if (typeof window === 'undefined') return;
-    
+
     if (remember) {
       localStorage.setItem('alzcare_remember_email', email);
     } else {
@@ -600,8 +599,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //   }
   // }, [otpCountdown, canResendOTP]);
   const clearSessionExpired = () => {
-  setSessionExpired(false);
-};
+    setSessionExpired(false);
+  };
   const value: AuthContextType = {
     user,
     profile,
@@ -622,7 +621,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionExpired,         // ADD THIS
     clearSessionExpired,
     pendingUser,
-  
+
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

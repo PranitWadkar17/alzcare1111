@@ -331,14 +331,8 @@ export default function LandingPage() {
                   Login
                 </motion.button>
               </Link>
-              <Link href="/register?role=patient">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="px-4 py-2 bg-linear-to-r from-emerald-500 to-emerald-600 text-white text-sm font-semibold rounded-xl hover:shadow-lg hover:shadow-emerald-500/25 transition-all"
-                >
-                  Get Started
-                </motion.button>
+              <Link href="/patient/dashboard">
+                <motion.button>Get Started</motion.button>
               </Link>
             </div>
 
