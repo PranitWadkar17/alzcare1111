@@ -77,7 +77,7 @@ export default function PatientDashboard() {
   const [tipIdx,setTipIdx] = useState(0);
   const router = useRouter();
 
-  useEffect(()=>{supabase.auth.getUser().then(({data:{user}})=>{if(user)setPatientId(user.id);});},[]);
+  useEffect(()=>{supabase.auth.getUser().then(({data:{user}}: {data:{user: any}})=>{if(user)setPatientId(user.id);});},[]);
 
   useEffect(()=>{
     const u=()=>{const n=new Date();setTime(n.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
