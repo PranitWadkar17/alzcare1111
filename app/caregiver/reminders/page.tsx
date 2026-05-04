@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   createTask, getAllTasks, deleteTask, updateTaskStatus,
-  SharedTask, TaskStatus,
+  subscribeToTasks, SharedTask, TaskStatus,
 } from '@/lib/task-service';
 
 const DEMO_PATIENTS = [
@@ -66,9 +66,8 @@ export default function CaregiverRemindersPage() {
 
   useEffect(() => {
     setTasks(getAllTasks());
-    const handler = () => setTasks(getAllTasks());
-    window.addEventListener('storage', handler);
-    return () => window.removeEventListener('storage', handler);
+    const unsub = subscribeToTasks(all => setTasks(all));
+    return unsub;
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
