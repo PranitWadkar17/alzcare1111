@@ -132,6 +132,10 @@ function LoginPageInner() {
 
     try {
       await verifyOTP(email, otp);
+      // Wait for the session cookie to be fully written before navigating.
+      // Without this, proxy.ts may not see the cookie yet and redirect back to /login.
+      await new Promise(resolve => setTimeout(resolve, 500));
+      router.refresh();
       router.push(redirectTo || '/patient/dashboard');
     } catch (err: any) {
       setError(err.message || 'Invalid OTP');

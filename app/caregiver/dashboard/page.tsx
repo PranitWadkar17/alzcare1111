@@ -5,8 +5,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Clock, Activity, Bell, MapPin, AlertTriangle,
   TrendingUp, CheckCircle2, XCircle, ChevronRight,
-  Zap, Heart, Shield,
+  Zap, Heart, Shield, HeartPulse, Brain, Moon,
 } from 'lucide-react';
+import { getLocationUpdates, subscribeLocation, LocationUpdate } from '@/lib/contact-service';
 import { useRouter } from 'next/navigation';
 import { getAllTasks, getTodaysTasks, subscribeToTasks, SharedTask } from '@/lib/task-service';
 
@@ -63,6 +64,7 @@ export default function CaregiverDashboard() {
   const [time, setTime] = useState('');
   const [greeting, setGreeting] = useState('');
   const [tasks, setTasks] = useState<SharedTask[]>([]);
+  const [patientLoc, setPatientLoc] = useState<LocationUpdate | null>(null);
 
   useEffect(() => {
     const update = () => {
@@ -80,6 +82,16 @@ export default function CaregiverDashboard() {
     setTasks(getAllTasks());
     const unsub = subscribeToTasks(all => setTasks(all));
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const locs = getLocationUpdates().filter(l => l.sender === 'patient');
+    if (locs.length) setPatientLoc(locs[locs.length - 1]);
+    const unsub2 = subscribeLocation(all => {
+      const p = all.filter(l => l.sender === 'patient');
+      if (p.length) setPatientLoc(p[p.length - 1]);
+    });
+    return unsub2;
   }, []);
 
   const today = new Date().toISOString().split('T')[0];
@@ -417,6 +429,74 @@ export default function CaregiverDashboard() {
                 </div>
                 <p className="text-sm text-slate-500">No alerts</p>
                 <p className="text-xs text-slate-600 mt-1">Everything looks good</p>
+              </div>
+            )}
+          </motion.div>
+        </div>
+
+        {/* ══════════════════════════════════════
+            HEALTH & LOCATION ROW
+           ══════════════════════════════════════ */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+          {/* Health Vitals Mini */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }}
+            onClick={() => router.push('/caregiver/health')}
+            className="p-5 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 hover:border-rose-400/20 cursor-pointer transition-all group">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="p-2 rounded-xl bg-rose-500/20"><HeartPulse className="w-4 h-4 text-rose-400" /></div>
+              <h3 className="font-semibold text-sm text-white">Health Vitals</h3>
+              <ChevronRight className="w-4 h-4 text-slate-600 ml-auto group-hover:text-rose-400 group-hover:translate-x-1 transition-all" />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { icon: HeartPulse, label: 'Heart', value: '72', unit: 'bpm', color: '#f87171' },
+                { icon: Brain, label: 'Cognitive', value: '78', unit: '/100', color: '#a78bfa' },
+                { icon: Moon, label: 'Sleep', value: '7.2', unit: 'hrs', color: '#818cf8' },
+              ].map((v, i) => (
+                <div key={i} className="text-center p-3 rounded-xl bg-white/[0.03] border border-white/[0.04]">
+                  <v.icon className="w-4 h-4 mx-auto mb-1" style={{ color: v.color }} />
+                  <p className="text-lg font-bold" style={{ color: v.color }}>{v.value}<span className="text-[9px] text-slate-500 ml-0.5">{v.unit}</span></p>
+                  <p className="text-[9px] text-slate-500">{v.label}</p>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* Patient Location */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}
+            onClick={() => router.push('/caregiver/location')}
+            className="p-5 rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 hover:border-sky-400/20 cursor-pointer transition-all group">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="p-2 rounded-xl bg-sky-500/20"><MapPin className="w-4 h-4 text-sky-400" /></div>
+              <h3 className="font-semibold text-sm text-white">Patient Location</h3>
+              <ChevronRight className="w-4 h-4 text-slate-600 ml-auto group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
+            </div>
+            {patientLoc ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+                      <MapPin className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#020617] animate-pulse" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-mono text-emerald-300">{patientLoc.lat.toFixed(5)}, {patientLoc.lng.toFixed(5)}</p>
+                    <p className="text-[10px] text-slate-500">{new Date(patientLoc.timestamp).toLocaleTimeString()}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Shield className="w-3 h-3 text-emerald-400" />
+                  <span className="text-[10px] text-emerald-400">Within safe zone</span>
+                  {patientLoc.autoShare && <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 ml-auto">Auto-tracking</span>}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center py-5 text-center">
+                <div className="p-3 rounded-full bg-white/5 mb-3"><MapPin className="w-6 h-6 text-slate-600" /></div>
+                <p className="text-sm text-slate-500">No location data yet</p>
+                <p className="text-xs text-slate-600 mt-1">Patient will share location from their app</p>
               </div>
             )}
           </motion.div>

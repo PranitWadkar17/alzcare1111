@@ -63,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkSession();
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       if (event === 'SIGNED_IN' && session?.user) {
         setUser(session.user);
         await fetchProfile(session.user.id);
@@ -118,8 +118,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data: { session } } = await supabase.auth.getSession();
 
       if (session?.user) {
-        setUser(session.user);
-        await fetchProfile(session.user.id);
+        const profileFound = await fetchProfile(session.user.id);
+        if (profileFound) {
+          setUser(session.user);
+        } else {
+          // Stale session with no matching profile — clean it up
+          console.warn('Stale session detected (no profile). Signing out.');
+          await supabase.auth.signOut();
+          clearAuthState();
+        }
       }
     } catch (error) {
       console.error('Session check error:', error);
@@ -128,36 +135,65 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const fetchProfile = async (userId: string) => {
+  const fetchProfile = async (userId: string): Promise<boolean> => {
     try {
+      // Step 1: Try to find profile by auth user ID
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
-      if (error) throw error;
+      let profileRow = data;
 
-      if (data) {
+      // Step 2: If not found by ID, try by email (handles ID mismatch permanently)
+      if (error || !data) {
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (authUser?.email) {
+          const { data: emailProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('email', authUser.email)
+            .single();
+
+          if (emailProfile) {
+            // Found by email! Fix the ID mismatch permanently in the database
+            console.log('[Auth] Healing profile ID mismatch:', emailProfile.id, '→', userId);
+            const { error: updateError } = await supabase
+              .from('profiles')
+              .update({ id: userId, updated_at: new Date().toISOString() })
+              .eq('email', authUser.email);
+
+            if (!updateError) {
+              profileRow = { ...emailProfile, id: userId };
+            } else {
+              console.error('[Auth] Failed to heal profile ID:', updateError.message);
+              return false;
+            }
+          }
+        }
+      }
+
+      if (profileRow) {
         const profileData: Profile = {
-          id: data.id,
-          email: data.email,
-          name: data.name,
-          role: data.role as UserRole,
-          phone: data.phone,
-          emergency_contact_name: data.emergency_contact_name,
-          emergency_contact_phone: data.emergency_contact_phone,
-          password_hint: data.password_hint,
-          two_factor_enabled: data.two_factor_enabled,
-          two_factor_secret: data.two_factor_secret,
-          last_login_at: data.last_login_at,
-          login_attempts: data.login_attempts || 0,
-          locked_until: data.locked_until,
-          remember_token: data.remember_token,
-          avatar_url: data.avatar_url,
-          language: data.language || 'en',
-          created_at: data.created_at,
-          updated_at: data.updated_at,
+          id: profileRow.id,
+          email: profileRow.email,
+          name: profileRow.name,
+          role: profileRow.role as UserRole,
+          phone: profileRow.phone,
+          emergency_contact_name: profileRow.emergency_contact_name,
+          emergency_contact_phone: profileRow.emergency_contact_phone,
+          password_hint: profileRow.password_hint,
+          two_factor_enabled: profileRow.two_factor_enabled,
+          two_factor_secret: profileRow.two_factor_secret,
+          last_login_at: profileRow.last_login_at,
+          login_attempts: profileRow.login_attempts || 0,
+          locked_until: profileRow.locked_until,
+          remember_token: profileRow.remember_token,
+          avatar_url: profileRow.avatar_url,
+          language: profileRow.language || 'en',
+          created_at: profileRow.created_at,
+          updated_at: profileRow.updated_at,
         };
 
         setProfile(profileData);
@@ -168,9 +204,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .from('profiles')
           .update({ last_login_at: new Date().toISOString() })
           .eq('id', userId);
+        return true;
       }
+      return false;
     } catch (error) {
       console.error('Fetch profile error:', error);
+      return false;
     }
   };
 
@@ -257,6 +296,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // PATIENT: Send OTP
   const sendOTP = async (email: string, isRegistration: boolean = false): Promise<{ success: boolean; message: string }> => {
     try {
+      // Clear any existing session first (prevents caregiver session from interfering)
+      try { await supabase.auth.signOut(); clearAuthState(); } catch {}
+
       // Check if account is locked
       const lockStatus = await checkAccountLock(email);
       if (lockStatus.locked) {
@@ -320,11 +362,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // PATIENT: Verify OTP
   const verifyOTP = async (email: string, token: string, userData?: { name: string; phone: string }) => {
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token,
-        type: 'email',
-      });
+      let data, error;
+      try {
+        const result = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+        data = result.data;
+        error = result.error;
+      } catch (fetchErr: any) {
+        throw new Error('Network error verifying OTP. The code may have expired — please request a new OTP.');
+      }
 
       if (error) {
         await incrementLoginAttempts(email);
@@ -332,17 +377,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data.user) {
-        // Check if profile exists
+        // Check if profile exists — query by EMAIL (reliable) not by ID (can mismatch)
         const { data: existingProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', data.user.id)
+          .eq('email', email)
           .single();
 
         // LOGIN PATH — profile must already exist
         if (!existingProfile && !userData) {
-          // User authenticated in Supabase Auth but has no profile
-          // Sign them out immediately to avoid broken state
           await supabase.auth.signOut();
           throw new Error('No account found for this email. Please register first.');
         }
@@ -370,7 +413,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // Both paths — complete login
+        // If profile ID doesn't match auth user ID, fix it permanently
+        if (existingProfile && existingProfile.id !== data.user.id) {
+          await supabase
+            .from('profiles')
+            .update({ id: data.user.id, updated_at: new Date().toISOString() })
+            .eq('email', email);
+        }
+
+        // Complete login
         await resetLoginAttempts(email);
         setUser(data.user);
         await fetchProfile(data.user.id);
