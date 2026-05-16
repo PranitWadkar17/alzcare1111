@@ -37,23 +37,47 @@ const Circle = dynamic(
   { ssr: false }
 );
 
-// ---- Fix Leaflet default marker icons ----
+// ---- Fix Leaflet default marker icons with pure CSS/SVG to avoid Tracking Prevention blocking external assets ----
 function useLeafletIcon() {
+  const [L, setL] = useState<any>(null);
+
   useEffect(() => {
-    (async () => {
-      const L = (await import('leaflet')).default;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl:
-          'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-        iconUrl:
-          'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-        shadowUrl:
-          'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-      });
-    })();
+    import('leaflet').then((mod) => {
+      setL(mod.default);
+    });
   }, []);
+
+  const customIcon = useMemo(() => {
+    if (!L) return null;
+    return L.divIcon({
+      html: `
+        <div class="relative flex items-center justify-center">
+          <div class="absolute w-8 h-8 bg-emerald-500/30 rounded-full animate-ping"></div>
+          <div class="w-4 h-4 bg-emerald-500 border-2 border-white rounded-full shadow-lg z-10"></div>
+          <div class="absolute -bottom-1 w-1 h-1 bg-emerald-600 rounded-full blur-[1px]"></div>
+        </div>
+      `,
+      className: 'custom-div-icon',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+  }, [L]);
+
+  const lowAccIcon = useMemo(() => {
+    if (!L) return null;
+    return L.divIcon({
+      html: `
+        <div class="relative flex items-center justify-center">
+          <div class="w-4 h-4 bg-amber-500 border-2 border-white rounded-full shadow-lg z-10"></div>
+        </div>
+      `,
+      className: 'custom-div-icon',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+  }, [L]);
+
+  return { customIcon, lowAccIcon };
 }
 
 // ---- Dynamic RecenterMap component (uses useMap inside MapContainer) ----
@@ -102,7 +126,7 @@ export function LocationStatus({
   error,
   onRefresh,
 }: LocationStatusProps) {
-  useLeafletIcon();
+  const { customIcon, lowAccIcon } = useLeafletIcon();
 
   // Recenter trigger — incremented when user clicks "Recenter"
   const [recenterTrigger, setRecenterTrigger] = useState(0);
@@ -123,25 +147,20 @@ export function LocationStatus({
   );
 
   const hasCoords = lat !== null && lng !== null;
-  const isLowAccuracy = accuracy !== null && accuracy > 100;
+  const isLowAccuracy = accuracy !== null && accuracy > 150; // Anything > 150m is likely not GPS
+
+  // Calculate dynamic zoom based on accuracy
+  const dynamicZoom = useMemo(() => {
+    if (!accuracy || accuracy < 100) return 17; // GPS level
+    if (accuracy < 500) return 15; // Street level
+    if (accuracy < 2000) return 13; // Neighborhood level
+    if (accuracy < 10000) return 11; // City level
+    return 9; // Regional level (e.g. 50km)
+  }, [accuracy]);
 
   const handleRecenter = useCallback(() => {
     setRecenterTrigger((prev) => prev + 1);
   }, []);
-
-  // Human-readable error with icon hint
-  const getErrorInfo = (err: string) => {
-    if (err.includes('permission') || err.includes('denied')) {
-      return { icon: '🔒', hint: 'Go to browser Settings → Site permissions → Location → Allow' };
-    }
-    if (err.includes('unavailable') || err.includes('GPS')) {
-      return { icon: '📡', hint: 'Enable GPS/Location Services on your device' };
-    }
-    if (err.includes('timed out') || err.includes('timeout')) {
-      return { icon: '⏱️', hint: 'Move to an area with better signal or try again' };
-    }
-    return { icon: '⚠️', hint: '' };
-  };
 
   return (
     <motion.div
@@ -167,7 +186,7 @@ export function LocationStatus({
             <h3 className="text-lg font-semibold">Location Tracking</h3>
             <p className="text-sm text-slate-400">
               {isTracking
-                ? 'Sharing location with caregivers'
+                ? 'Sharing live location with caregivers'
                 : 'Location tracking paused'}
             </p>
           </div>
@@ -200,12 +219,10 @@ export function LocationStatus({
           <div className="flex items-start gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
             <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm text-red-300">{error}</p>
-              {getErrorInfo(error).hint && (
-                <p className="text-xs text-red-400/70 mt-1">
-                  {getErrorInfo(error).icon} {getErrorInfo(error).hint}
-                </p>
-              )}
+              <p className="text-sm text-red-300 font-medium">{error}</p>
+              <p className="text-xs text-red-400/70 mt-1">
+                🔒 Hint: Ensure browser location permissions are enabled.
+              </p>
             </div>
           </div>
           {/* Show a placeholder map area when there's an error */}
@@ -235,16 +252,30 @@ export function LocationStatus({
             >
               {isTracking ? '● Live Tracking Active' : '○ Tracking Paused'}
             </span>
+            {isLowAccuracy && isTracking && (
+              <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full border border-amber-500/20">
+                Low Accuracy
+              </span>
+            )}
           </div>
 
           {/* Low accuracy warning */}
           {isLowAccuracy && (
-            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              <p className="text-xs text-amber-300">
-                Location accuracy is low (±{Math.round(accuracy!)}m). Move
-                outdoors or enable precise location.
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <p className="text-xs font-bold text-amber-400 uppercase tracking-wide">
+                  Approximate Location
+                </p>
+              </div>
+              <p className="text-[11px] text-amber-300/80 leading-relaxed">
+                Your browser is reporting a wide area (±{Math.round(accuracy! / 1000)}km).
+                This usually happens on desktop PCs without GPS.
               </p>
+              <div className="mt-2 space-y-1">
+                <p className="text-[10px] text-slate-400">• Windows: Settings → Privacy → Location (On)</p>
+                <p className="text-[10px] text-slate-400">• Browser: Click lock icon in URL bar → Allow Location</p>
+              </div>
             </div>
           )}
 
@@ -256,7 +287,7 @@ export function LocationStatus({
             {hasCoords ? (
               <MapContainer
                 center={center}
-                zoom={17}
+                zoom={dynamicZoom}
                 scrollWheelZoom={true}
                 style={{ height: '100%', width: '100%' }}
                 zoomControl={true}
@@ -272,8 +303,8 @@ export function LocationStatus({
                     center={center}
                     radius={accuracy}
                     pathOptions={{
-                      color: '#10b981',
-                      fillColor: '#10b981',
+                      color: isLowAccuracy ? '#f59e0b' : '#10b981',
+                      fillColor: isLowAccuracy ? '#f59e0b' : '#10b981',
                       fillOpacity: 0.1,
                       weight: 1.5,
                       dashArray: '4 4',
@@ -282,22 +313,20 @@ export function LocationStatus({
                 )}
 
                 {/* Patient marker */}
-                <Marker position={center}>
-                  <Popup>
-                    <div style={{ color: '#1e293b', minWidth: 160 }}>
-                      <p style={{ fontWeight: 600, marginBottom: 4, fontSize: 14 }}>
-                        📍 Patient current location
-                      </p>
-                      <p style={{ fontSize: 12, color: '#64748b', margin: 0 }}>
-                        Lat: {lat!.toFixed(6)}
-                        <br />
-                        Lng: {lng!.toFixed(6)}
-                        <br />
-                        Accuracy: ±{accuracy ? Math.round(accuracy) : '?'}m
-                      </p>
-                    </div>
-                  </Popup>
-                </Marker>
+                {customIcon && (
+                  <Marker position={center} icon={isLowAccuracy ? lowAccIcon : customIcon}>
+                    <Popup>
+                      <div style={{ color: '#1e293b', minWidth: 160 }}>
+                        <p style={{ fontWeight: 600, marginBottom: 4, fontSize: 14 }}>
+                          📍 {isLowAccuracy ? 'Estimated Area' : 'Exact Location'}
+                        </p>
+                        <p style={{ fontSize: 12, color: '#64748b', margin: 0 }}>
+                          Accuracy: ±{accuracy ? Math.round(accuracy) : '?'}m
+                        </p>
+                      </div>
+                    </Popup>
+                  </Marker>
+                )}
 
                 {/* Recenter controller */}
                 <RecenterMap

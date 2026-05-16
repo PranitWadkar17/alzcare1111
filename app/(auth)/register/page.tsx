@@ -77,7 +77,7 @@ function RegisterContent() {
   useEffect(() => {
     if (step !== 'success') return;
     const timer = setTimeout(() => {
-      router.push(role === 'patient' ? '/patient/dashboard' : '/caregiver/dashboard');
+      router.push(role === 'patient' ? '/patient/welcome' : '/caregiver/welcome');
     }, 2000);
     return () => clearTimeout(timer);
   }, [step, role]);

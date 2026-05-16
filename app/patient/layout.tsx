@@ -21,6 +21,9 @@ export default function PatientLayout({ children }: { children: React.ReactNode 
   const router = useRouter();
   const pathname = usePathname();
 
+  // Hide sidebar on welcome page
+  const isWelcomePage = pathname === '/patient/welcome';
+
   const menuItems = [
     { name: 'Home', icon: Home, path: '/patient/dashboard' },
     { name: 'My Activities', icon: ClipboardList, path: '/patient/activities' },
@@ -32,6 +35,11 @@ export default function PatientLayout({ children }: { children: React.ReactNode 
   ];
 
   const isActive = (path: string) => pathname === path;
+
+  // If welcome page, render without sidebar
+  if (isWelcomePage) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-screen bg-[#020617] text-white">

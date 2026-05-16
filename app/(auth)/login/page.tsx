@@ -1,19 +1,19 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import ParticleCanvas from "@/components/ParticleCanvas";
-import { 
-  UserPlus, 
-  User, 
-  Stethoscope, 
-  Mail, 
-  Lock, 
-  Eye, 
-  EyeOff, 
+import {
+  UserPlus,
+  User,
+  Stethoscope,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
   ArrowRight,
   Shield,
   Heart,
@@ -23,16 +23,16 @@ import {
 
 type LoginType = 'select' | 'patient' | 'caregiver' | 'register';
 
-function LoginPageInner() {
+export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirectTo') || '';
-  
-  const { 
-    sendOTP, 
-    verifyOTP, 
-    signInCaregiver, 
-   // checkAccountLock,
+
+  const {
+    sendOTP,
+    verifyOTP,
+    signInCaregiver,
+    // checkAccountLock,
     getRememberedEmail,
     setRememberEmail: setAuthRememberEmail,
     sessionExpired,        // ADD THIS
@@ -81,44 +81,44 @@ function LoginPageInner() {
       setCountdown(60);
     }
   }, [countdown, canResend]);
-    useEffect(() => {
-  if (sessionExpired) {
-    setError('Your session expired. Please login again.');
-    clearSessionExpired();
-  }
-}, [sessionExpired]);
-
-  
-    const handleSendOTP = async () => {
-  if (!email) {
-    setError('Please enter your email');
-    return;
-  }
-
-  if (!isValidEmail(email)) {
-    setError('Please enter a valid email address');
-    return;
-  }
-
-  setLoading(true);
-  setError('');
-
-  try {
-    const result = await sendOTP(email);
-    if (result.success) {
-      setOtpSent(true);
-      setCanResend(false);
-      setCountdown(60);
-      if (rememberEmail) setAuthRememberEmail(email, true);
-    } else {
-      setError(result.message);  // this already handles lock message from AuthContext
+  useEffect(() => {
+    if (sessionExpired) {
+      setError('Your session expired. Please login again.');
+      clearSessionExpired();
     }
-  } catch (err: any) {
-    setError(err.message || 'Failed to send OTP');
-  } finally {
-    setLoading(false);
-  }
-};
+  }, [sessionExpired]);
+
+
+  const handleSendOTP = async () => {
+    if (!email) {
+      setError('Please enter your email');
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const result = await sendOTP(email);
+      if (result.success) {
+        setOtpSent(true);
+        setCanResend(false);
+        setCountdown(60);
+        if (rememberEmail) setAuthRememberEmail(email, true);
+      } else {
+        setError(result.message);  // this already handles lock message from AuthContext
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to send OTP');
+    } finally {
+      setLoading(false);
+    }
+  };
 
 
   const handleVerifyOTP = async () => {
@@ -132,11 +132,7 @@ function LoginPageInner() {
 
     try {
       await verifyOTP(email, otp);
-      // Wait for the session cookie to be fully written before navigating.
-      // Without this, proxy.ts may not see the cookie yet and redirect back to /login.
-      await new Promise(resolve => setTimeout(resolve, 500));
-      router.refresh();
-      router.push(redirectTo || '/patient/dashboard');
+      router.push(redirectTo || '/patient/welcome');
     } catch (err: any) {
       setError(err.message || 'Invalid OTP');
     } finally {
@@ -161,7 +157,7 @@ function LoginPageInner() {
     try {
       await signInCaregiver(email, password);
       if (rememberEmail) setAuthRememberEmail(email, true); // FIXED: use renamed function
-      router.push(redirectTo || '/caregiver/dashboard');
+      router.push(redirectTo || '/caregiver/welcome');
     } catch (err: any) {
       setError(err.message || 'Invalid credentials');
     } finally {
@@ -184,7 +180,7 @@ function LoginPageInner() {
   // Animation variants - SIMPLIFIED to avoid TypeScript errors
   const containerVariants = {
     hidden: { opacity: 0 },
-    visible: { 
+    visible: {
       opacity: 1,
       transition: { staggerChildren: 0.1, delayChildren: 0.2 }
     }
@@ -192,8 +188,8 @@ function LoginPageInner() {
 
   const itemVariants = {
     hidden: { y: 20, opacity: 0 },
-    visible: { 
-      y: 0, 
+    visible: {
+      y: 0,
       opacity: 1,
       transition: { type: 'spring' as const, stiffness: 100 }
     }
@@ -211,44 +207,44 @@ function LoginPageInner() {
       {/* <div className="min-h-screen bg-slate-950 relative overflow-hidden">
        <AnimatedBackground /> */}
       <div className="absolute inset-0 overflow-hidden">
-         <ParticleCanvas />
+        <ParticleCanvas />
         {/* Gradient Orbs */}
-        <motion.div 
+        <motion.div
           className="absolute top-0 left-1/4 w-96 h-96 bg-sky-500/20 rounded-full blur-3xl"
-          animate={{ 
+          animate={{
             scale: [1, 1.2, 1],
             x: [0, 50, 0],
             y: [0, 30, 0]
           }}
           transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
         />
-        <motion.div 
+        <motion.div
           className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/20 rounded-full blur-3xl"
-          animate={{ 
+          animate={{
             scale: [1, 1.3, 1],
             x: [0, -30, 0],
             y: [0, -50, 0]
           }}
           transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
         />
-        <motion.div 
+        <motion.div
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl"
           animate={{ rotate: 360 }}
           transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
         />
-        
+
         {/* Grid Pattern */}
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-size-[60px_60px]" />
       </div>
 
       {/* Main Container */}
-      <motion.div 
+      <motion.div
         className="relative z-10 w-full max-w-6xl"
         initial="hidden"
         animate="visible"
         variants={containerVariants}
       >
-        
+
         {/* Header */}
         <motion.div variants={itemVariants} className="text-center mb-12">
           <div className="flex items-center justify-center gap-3 mb-4">
@@ -265,7 +261,7 @@ function LoginPageInner() {
         {/* Error Message */}
         <AnimatePresence>
           {error && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -278,7 +274,7 @@ function LoginPageInner() {
 
         {/* Selection View */}
         {loginType === 'select' && (
-          <motion.div 
+          <motion.div
             variants={containerVariants}
             className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto"
           >
@@ -365,12 +361,12 @@ function LoginPageInner() {
               className="max-w-md mx-auto"
             >
               <div className="p-8 rounded-3xl bg-white/5 backdrop-blur-xl border border-white/10">
-                <button 
-                  onClick={() => { 
-                  setLoginType('select'); 
-                   setOtpSent(false); 
-                     setError(''); // Optional - remove if you want to keep email
-                }}
+                <button
+                  onClick={() => {
+                    setLoginType('select');
+                    setOtpSent(false);
+                    setError(''); // Optional - remove if you want to keep email
+                  }}
                   className="flex items-center text-slate-400 hover:text-white mb-6 transition-colors"
                 >
                   <ChevronLeft className="w-5 h-5 mr-1" />
@@ -489,9 +485,9 @@ function LoginPageInner() {
               className="max-w-md mx-auto"
             >
               <div className="p-8 rounded-3xl bg-white/5 backdrop-blur-xl border border-white/10">
-                <button 
-                  onClick={() => { 
-                    setLoginType('select'); 
+                <button
+                  onClick={() => {
+                    setLoginType('select');
                     setError('');
                     setPassword('');
                     setEmail(''); // Optional - remove if you want to keep email
@@ -544,25 +540,24 @@ function LoginPageInner() {
                         {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                       </button>
                     </div>
-                   {password && password.length > 0 && (
+                    {password && password.length > 0 && (
                       <div className="mt-2">
                         <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                          <div 
-                            className={`h-full transition-all duration-300 ${
-                              password.length < 8
+                          <div
+                            className={`h-full transition-all duration-300 ${password.length < 8
                                 ? 'w-1/3 bg-red-500'
                                 : password.length >= 8 && !isStrongPassword(password)
-                                ? 'w-2/3 bg-yellow-500'
-                                : 'w-full bg-emerald-500'
-                            }`}
+                                  ? 'w-2/3 bg-yellow-500'
+                                  : 'w-full bg-emerald-500'
+                              }`}
                           />
                         </div>
                         <p className="text-xs text-slate-400 mt-1">
                           {password.length < 8
                             ? 'Weak — min 8 characters'
                             : !isStrongPassword(password)
-                            ? 'Good — add uppercase, number & symbol for strong'
-                            : 'Strong password'}
+                              ? 'Good — add uppercase, number & symbol for strong'
+                              : 'Strong password'}
                         </p>
                       </div>
                     )}
@@ -619,7 +614,7 @@ function LoginPageInner() {
                 </div>
                 <h2 className="text-2xl font-semibold text-white mb-4">Create Account</h2>
                 <p className="text-slate-400 mb-8">Choose your account type to get started</p>
-                
+
                 <div className="space-y-4">
                   <Link href="/register?role=patient">
                     <motion.div
@@ -631,7 +626,7 @@ function LoginPageInner() {
                       <span className="text-emerald-300 font-medium">Register as Patient</span>
                     </motion.div>
                   </Link>
-                  
+
                   <Link href="/register?role=caregiver">
                     <motion.div
                       whileHover={{ scale: 1.02 }}
@@ -644,8 +639,8 @@ function LoginPageInner() {
                   </Link>
                 </div>
 
-                <button 
-                  onClick={() => { 
+                <button
+                  onClick={() => {
                     setLoginType('select');
                     setError('');
                   }}
@@ -677,13 +672,5 @@ function LoginPageInner() {
         </motion.div>
       </motion.div>
     </div>
-  );
-}
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[#020617]" />}>
-      <LoginPageInner />
-    </Suspense>
   );
 }

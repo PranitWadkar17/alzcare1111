@@ -13,10 +13,9 @@ import {
 } from '@/lib/task-service';
 
 const DEMO_PATIENTS = [
-  'Margaret Johnson',
-  'Robert Wilson',
-  'Dorothy Clarke',
-  'Henry Thompson',
+  'Pranit Wadkar',
+  'Abhishek chavan ',
+  
 ];
 
 const STATUS_CFG: Record<TaskStatus, {
