@@ -23,6 +23,7 @@ interface AIChatbotProps {
   };
   onSendLocation?: () => void;
   onCallCaregiver?: () => void;
+  onSendSOS?: () => void;
   onLogActivity?: (activity: string) => void;
   onNavigate?: (path: string) => void;
   onShowReminders?: () => void;
@@ -32,6 +33,7 @@ export default function AIChatbot({
   patientContext,
   onSendLocation,
   onCallCaregiver,
+  onSendSOS,
   onLogActivity,
   onNavigate,
   onShowReminders,
@@ -109,6 +111,14 @@ export default function AIChatbot({
           aiMessageContent = aiMessageContent.replace('ACTION:CALL_CAREGIVER', '').trim();
           if (!aiMessageContent) {
             aiMessageContent = '📞 Calling your caregiver now!';
+          }
+        }
+        
+        if (aiMessageContent.includes('ACTION:SEND_SOS')) {
+          onSendSOS?.();
+          aiMessageContent = aiMessageContent.replace('ACTION:SEND_SOS', '').trim();
+          if (!aiMessageContent) {
+            aiMessageContent = '🆘 Emergency SOS alert sent! Your caregiver has been notified via SMS and your location has been shared.';
           }
         }
         
@@ -236,7 +246,7 @@ export default function AIChatbot({
     { label: 'My Location', icon: MapPin, action: () => setInput('What is my current location?') },
     { label: 'Send Location', icon: MapPin, action: () => setInput('Send my location to caregiver') },
     { label: 'Call Help', icon: Phone, action: () => setInput('Call my caregiver') },
-    { label: 'Reminders', icon: Bell, action: () => setInput('Show my reminders') },
+    { label: 'SOS Alert', icon: Bell, action: () => setInput('Send emergency SOS alert') },
   ];
 
   return (

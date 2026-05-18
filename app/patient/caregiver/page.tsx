@@ -12,10 +12,16 @@ import {
   initiateCall, updateCallStatus, getCalls, subscribeCalls, CallRecord,
 } from '@/lib/contact-service';
 import { sendAlert } from '@/lib/alert-service';
+import { CallCaregiverButton } from '@/components/CallCaregiverButton';
+import { createBrowserSupabaseClient } from '@/lib/supabase';
+
+const supabase = createBrowserSupabaseClient();
 
 const QUICK_MSGS = ['🏠 I\'m home safe','🚶 Going for a walk','🛒 At the store','🏥 At the doctor','😊 I\'m feeling good','🍽️ Having lunch'];
 
 export default function PatientCaregiverPage() {
+  const [patientId, setPatientId] = useState('');
+  const [caregiverId, setCaregiverId] = useState('');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [locations, setLocations] = useState<LocationUpdate[]>([]);
   const [calls, setCalls] = useState<CallRecord[]>([]);
@@ -33,8 +39,26 @@ export default function PatientCaregiverPage() {
   const [calling, setCalling] = useState(false);
   const [callTimer, setCallTimer] = useState(0);
   const [activeCall, setActiveCall] = useState<string|null>(null);
+  const [sendingSMS, setSendingSMS] = useState(false);
+  const [smsStatus, setSmsStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const autoRef = useRef<NodeJS.Timeout|null>(null);
   const callRef = useRef<NodeJS.Timeout|null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data: { user } }: { data: { user: any } }) => {
+      if (user) {
+        setPatientId(user.id);
+        // Get caregiver ID from patient_caregiver_links
+        const { data: link } = await supabase
+          .from('patient_caregiver_links')
+          .select('caregiver_id')
+          .eq('patient_id', user.id)
+          .eq('status', 'active')
+          .single();
+        if (link) setCaregiverId(link.caregiver_id);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     setContacts(getContacts().filter(c => c.role === 'caregiver'));
@@ -94,9 +118,52 @@ export default function PatientCaregiverPage() {
     }
   };
 
+  const sendSOSAlert = async () => {
+    if (!patientId || sendingSMS) return;
+    
+    setSendingSMS(true);
+    setSmsStatus('sending');
+    
+    try {
+      const response = await fetch('/api/twilio/sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          type: 'sos',
+          lat: myLat || null,
+          lng: myLng || null,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setSmsStatus('success');
+        setTimeout(() => setSmsStatus('idle'), 3000);
+      } else {
+        throw new Error(data.error || 'Failed to send SMS');
+      }
+    } catch (error: any) {
+      console.error('SMS failed:', error);
+      setSmsStatus('error');
+      setTimeout(() => setSmsStatus('idle'), 3000);
+    } finally {
+      setSendingSMS(false);
+    }
+  };
+
   const handleSOS = () => {
+    // Send SMS alert
+    sendSOSAlert();
+    // Send location
+    if (myLat && myLng) {
+      sendLocationUpdate({ lat: myLat, lng: myLng, timestamp: new Date().toISOString(), sender: 'patient' });
+      setLocSending(true);
+      setTimeout(() => setLocSending(false), 1500);
+    }
+    // Send alert to local system
     sendAlert({ sender: 'patient', message: '🆘 EMERGENCY SOS — Need immediate help!', priority: 'critical', type: 'sos', lat: myLat ?? undefined, lng: myLng ?? undefined });
-    if (myLat && myLng) sendLocationUpdate({ lat: myLat, lng: myLng, timestamp: new Date().toISOString(), sender: 'patient' });
   };
 
   const handleMsg = (text: string) => {
@@ -133,16 +200,23 @@ export default function PatientCaregiverPage() {
 
         {/* Call + Location + SOS Row */}
         <div className="grid grid-cols-3 gap-3">
-          {/* Call */}
-          <motion.button initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.05 }}
-            whileHover={{ scale:1.02 }} whileTap={{ scale:0.98 }} onClick={handleCall}
-            className={`p-5 rounded-2xl flex flex-col items-center gap-2 transition-all border ${
-              calling ? 'bg-red-500/15 border-red-500/25' : 'bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15'
-            }`}>
-            {calling ? <PhoneOff className="w-7 h-7 text-red-400" /> : <Phone className="w-7 h-7 text-emerald-400" />}
-            <span className={`text-sm font-bold ${calling ? 'text-red-400' : 'text-emerald-400'}`}>{calling ? `End ${Math.floor(callTimer/60)}:${(callTimer%60).toString().padStart(2,'0')}` : 'Call'}</span>
-            {calling && <span className="flex gap-1">{[1,2,3].map(i => <span key={i} className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" style={{ animationDelay:`${i*0.2}s` }} />)}</span>}
-          </motion.button>
+          {/* Call - Twilio Integration */}
+          <motion.div initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.05 }}
+            className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center overflow-hidden">
+            {patientId && caregiverId ? (
+              <div className="w-full flex items-center justify-center py-2">
+                <CallCaregiverButton 
+                  patientId={patientId} 
+                  caregiverId={caregiverId}
+                />
+              </div>
+            ) : (
+              <div className="text-center py-5">
+                <Loader2 className="w-7 h-7 text-emerald-400 animate-spin mx-auto" />
+                <span className="text-sm font-bold text-emerald-400 mt-2 block">Loading...</span>
+              </div>
+            )}
+          </motion.div>
 
           {/* Send Location */}
           <motion.button initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.08 }}
@@ -153,13 +227,46 @@ export default function PatientCaregiverPage() {
             {myLat && <span className="text-[9px] text-slate-500">{myLat.toFixed(4)}, {myLng?.toFixed(4)}</span>}
           </motion.button>
 
-          {/* SOS */}
+          {/* SOS - SMS Integration */}
           <motion.button initial={{ opacity:0,y:16 }} animate={{ opacity:1,y:0 }} transition={{ delay:0.11 }}
-            whileHover={{ scale:1.02 }} whileTap={{ scale:0.95 }} onClick={handleSOS}
-            className="p-5 rounded-2xl bg-red-500/15 border border-red-500/25 hover:bg-red-500/25 flex flex-col items-center gap-2 transition-all">
-            <Shield className="w-7 h-7 text-red-400" />
-            <span className="text-sm font-bold text-red-400">SOS</span>
-            <span className="text-[9px] text-red-400/60">Emergency</span>
+            whileHover={{ scale: sendingSMS ? 1 : 1.02 }} whileTap={{ scale: sendingSMS ? 1 : 0.95 }} 
+            onClick={handleSOS}
+            disabled={sendingSMS}
+            className={`p-5 rounded-2xl flex flex-col items-center gap-2 transition-all ${
+              sendingSMS
+                ? 'bg-slate-500/15 border-slate-500/25 cursor-not-allowed opacity-70'
+                : smsStatus === 'success'
+                ? 'bg-emerald-500/15 border-emerald-500/25 hover:bg-emerald-500/25'
+                : smsStatus === 'error'
+                ? 'bg-orange-500/15 border-orange-500/25 hover:bg-orange-500/25'
+                : 'bg-red-500/15 border-red-500/25 hover:bg-red-500/25'
+            }`}>
+            {sendingSMS ? (
+              <>
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="w-7 h-7 border-2 border-slate-400 border-t-transparent rounded-full"
+                />
+                <span className="text-sm font-bold text-slate-400">Sending...</span>
+              </>
+            ) : smsStatus === 'success' ? (
+              <>
+                <CheckCircle2 className="w-7 h-7 text-emerald-400" />
+                <span className="text-sm font-bold text-emerald-400">Alert Sent!</span>
+              </>
+            ) : smsStatus === 'error' ? (
+              <>
+                <Shield className="w-7 h-7 text-orange-400" />
+                <span className="text-sm font-bold text-orange-400">Try Again</span>
+              </>
+            ) : (
+              <>
+                <Shield className="w-7 h-7 text-red-400" />
+                <span className="text-sm font-bold text-red-400">SOS</span>
+                <span className="text-[9px] text-red-400/60">Emergency</span>
+              </>
+            )}
           </motion.button>
         </div>
 

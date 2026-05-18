@@ -271,7 +271,7 @@ export default function PatientWelcomePage() {
               >
                 <h1 className="text-5xl sm:text-6xl md:text-7xl font-extrabold mb-4">
                   <span className="bg-gradient-to-r from-white via-emerald-100 to-emerald-400 bg-clip-text text-transparent">
-                    Welcome,Pranit ! 👋
+                    Welcome to your patient hub! 👋
                   </span>
                 </h1>
                 <p className="text-xl sm:text-2xl text-slate-400 mb-2">
