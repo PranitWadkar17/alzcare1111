@@ -13,6 +13,10 @@ import { createBrowserSupabaseClient } from '@/lib/supabase';
 import { useLocationTracker } from '@/hooks/useLocationTracker';
 import { getTodaysTasks } from '@/lib/task-service';
 
+// Helper: safe capitalization
+
+
+
 const supabase = createBrowserSupabaseClient();
 
 function ParticleCanvas() {
@@ -139,9 +143,26 @@ export default function PatientWelcomePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setPatientId(user.id);
-        // Try to get name from metadata or email
-        const name = user.user_metadata?.name || user.email?.split('@')[0] || 'Patient';
-        setUserName(name.charAt(0).toUpperCase() + name.slice(1));
+        // Prefer name stored in Supabase profiles table
+        // (this is what was provided during account creation)
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('name')
+            .eq('id', user.id)
+            .single();
+
+          const nameFromProfile = profile?.name;
+
+          // Fallback to auth metadata / email local-part
+          const fallback = user.user_metadata?.name || user.email?.split('@')[0] || 'Patient';
+          const finalName = nameFromProfile || fallback;
+
+          setUserName(finalName.charAt(0).toUpperCase() + finalName.slice(1));
+        } catch {
+          const fallback = user.user_metadata?.name || user.email?.split('@')[0] || 'Patient';
+          setUserName(fallback.charAt(0).toUpperCase() + fallback.slice(1));
+        }
       }
       setIsLoading(false);
     };
@@ -271,7 +292,7 @@ export default function PatientWelcomePage() {
               >
                 <h1 className="text-5xl sm:text-6xl md:text-7xl font-extrabold mb-4">
                   <span className="bg-gradient-to-r from-white via-emerald-100 to-emerald-400 bg-clip-text text-transparent">
-                    Welcome,Pranit ! 👋
+Welcome, {userName || 'Patient'} ! 👋
                   </span>
                 </h1>
                 <p className="text-xl sm:text-2xl text-slate-400 mb-2">

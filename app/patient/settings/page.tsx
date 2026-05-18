@@ -120,9 +120,11 @@ export default function SettingsPage() {
     }
   };
 
-  const loadSettings = () => {
-    // Load from localStorage
-    const settings = {
+  const loadSettings = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    // Load local storage values first as fallback
+    let settings: any = {
       sound: localStorage.getItem("sound"),
       notifications: localStorage.getItem("notifications"),
       darkMode: localStorage.getItem("darkMode"),
@@ -148,29 +150,33 @@ export default function SettingsPage() {
       profileStage: localStorage.getItem("profileStage"),
     };
 
-    if (settings.sound !== null) setSound(settings.sound === "true");
-    if (settings.notifications !== null) setNotifications(settings.notifications === "true");
-    if (settings.darkMode !== null) setDarkMode(settings.darkMode === "true");
-    if (settings.vibration !== null) setVibration(settings.vibration === "true");
+    if (user?.user_metadata?.alzcare_settings) {
+      settings = { ...settings, ...user.user_metadata.alzcare_settings };
+    }
+
+    if (settings.sound !== null) setSound(settings.sound === "true" || settings.sound === true);
+    if (settings.notifications !== null) setNotifications(settings.notifications === "true" || settings.notifications === true);
+    if (settings.darkMode !== null) setDarkMode(settings.darkMode === "true" || settings.darkMode === true);
+    if (settings.vibration !== null) setVibration(settings.vibration === "true" || settings.vibration === true);
     if (settings.theme) setTheme(settings.theme);
     if (settings.language) setLanguage(settings.language);
-    if (settings.locationTracking !== null) setLocationTracking(settings.locationTracking === "true");
+    if (settings.locationTracking !== null) setLocationTracking(settings.locationTracking === "true" || settings.locationTracking === true);
     if (settings.trackingInterval) setTrackingInterval(settings.trackingInterval);
-    if (settings.geofenceEnabled !== null) setGeofenceEnabled(settings.geofenceEnabled === "true");
-    if (settings.fallDetection !== null) setFallDetection(settings.fallDetection === "true");
-    if (settings.medicationNotif !== null) setMedicationNotif(settings.medicationNotif === "true");
-    if (settings.mealNotif !== null) setMealNotif(settings.mealNotif === "true");
-    if (settings.activityNotif !== null) setActivityNotif(settings.activityNotif === "true");
-    if (settings.quietHoursEnabled !== null) setQuietHoursEnabled(settings.quietHoursEnabled === "true");
+    if (settings.geofenceEnabled !== null) setGeofenceEnabled(settings.geofenceEnabled === "true" || settings.geofenceEnabled === true);
+    if (settings.fallDetection !== null) setFallDetection(settings.fallDetection === "true" || settings.fallDetection === true);
+    if (settings.medicationNotif !== null) setMedicationNotif(settings.medicationNotif === "true" || settings.medicationNotif === true);
+    if (settings.mealNotif !== null) setMealNotif(settings.mealNotif === "true" || settings.mealNotif === true);
+    if (settings.activityNotif !== null) setActivityNotif(settings.activityNotif === "true" || settings.activityNotif === true);
+    if (settings.quietHoursEnabled !== null) setQuietHoursEnabled(settings.quietHoursEnabled === "true" || settings.quietHoursEnabled === true);
     if (settings.quietStart) setQuietStart(settings.quietStart);
     if (settings.quietEnd) setQuietEnd(settings.quietEnd);
     if (settings.fontSize) setFontSize(settings.fontSize);
-    if (settings.highContrast !== null) setHighContrast(settings.highContrast === "true");
-    if (settings.voiceGuidance !== null) setVoiceGuidance(settings.voiceGuidance === "true");
-    if (settings.simplifiedMode !== null) setSimplifiedMode(settings.simplifiedMode === "true");
-    if (settings.largeButtons !== null) setLargeButtons(settings.largeButtons === "true");
-    if (settings.profileAge) setProfile(prev => ({ ...prev, age: settings.profileAge! }));
-    if (settings.profileStage) setProfile(prev => ({ ...prev, diagnosis_stage: settings.profileStage! }));
+    if (settings.highContrast !== null) setHighContrast(settings.highContrast === "true" || settings.highContrast === true);
+    if (settings.voiceGuidance !== null) setVoiceGuidance(settings.voiceGuidance === "true" || settings.voiceGuidance === true);
+    if (settings.simplifiedMode !== null) setSimplifiedMode(settings.simplifiedMode === "true" || settings.simplifiedMode === true);
+    if (settings.largeButtons !== null) setLargeButtons(settings.largeButtons === "true" || settings.largeButtons === true);
+    if (settings.profileAge) setProfile(prev => ({ ...prev, age: String(settings.profileAge) }));
+    if (settings.profileStage) setProfile(prev => ({ ...prev, diagnosis_stage: settings.profileStage }));
   };
 
   const saveProfile = async () => {
@@ -179,10 +185,27 @@ export default function SettingsPage() {
     setProfileSaveStatus("saving");
     
     try {
-      // Save to localStorage only
       localStorage.setItem("profileName", profile.name);
       localStorage.setItem("profileAge", profile.age);
       localStorage.setItem("profileStage", profile.diagnosis_stage);
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentMeta = user?.user_metadata || {};
+      const currentSettings = currentMeta.alzcare_settings || {};
+      
+      const updatedSettings = {
+        ...currentSettings,
+        profileAge: profile.age,
+        profileStage: profile.diagnosis_stage,
+      };
+
+      await supabase.auth.updateUser({
+        data: {
+          ...currentMeta,
+          name: profile.name,
+          alzcare_settings: updatedSettings
+        }
+      });
       
       setProfileSaveStatus("saved");
       setTimeout(() => setProfileSaveStatus("idle"), 2000);
@@ -193,10 +216,27 @@ export default function SettingsPage() {
     }
   };
 
-  const deleteProfile = () => {
+  const deleteProfile = async () => {
     localStorage.removeItem("profileName");
     localStorage.removeItem("profileAge");
     localStorage.removeItem("profileStage");
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const currentMeta = user?.user_metadata || {};
+      const currentSettings = currentMeta.alzcare_settings || {};
+      delete currentSettings.profileAge;
+      delete currentSettings.profileStage;
+      
+      await supabase.auth.updateUser({
+        data: {
+          ...currentMeta,
+          name: "",
+          alzcare_settings: currentSettings
+        }
+      });
+    }
+
     setProfile({
       name: "",
       email: profile.email,
@@ -233,6 +273,43 @@ export default function SettingsPage() {
       localStorage.setItem("largeButtons", largeButtons.toString());
       localStorage.setItem("profileAge", profile.age);
       localStorage.setItem("profileStage", profile.diagnosis_stage);
+
+      // Save to Supabase auth metadata
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentMeta = user?.user_metadata || {};
+      const updatedSettings = {
+        sound,
+        notifications,
+        darkMode,
+        vibration,
+        theme,
+        language,
+        locationTracking,
+        trackingInterval,
+        geofenceEnabled,
+        fallDetection,
+        medicationNotif,
+        mealNotif,
+        activityNotif,
+        quietHoursEnabled,
+        quietStart,
+        quietEnd,
+        fontSize,
+        highContrast,
+        voiceGuidance,
+        simplifiedMode,
+        largeButtons,
+        profileAge: profile.age,
+        profileStage: profile.diagnosis_stage,
+      };
+
+      await supabase.auth.updateUser({
+        data: {
+          ...currentMeta,
+          name: profile.name,
+          alzcare_settings: updatedSettings
+        }
+      });
 
       // Apply font size globally
       document.documentElement.style.setProperty(

@@ -12,6 +12,7 @@ import {
   HeartPulse, UserPlus, Navigation, ClipboardList
 } from 'lucide-react';
 import { createBrowserSupabaseClient } from '@/lib/supabase';
+import { getTodaysTasks, subscribeToTasks, SharedTask } from '@/lib/task-service';
 
 const supabase = createBrowserSupabaseClient();
 
@@ -136,9 +137,16 @@ export default function CaregiverWelcomePage() {
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState({
     patientsCount: 0,
-    alertsCount: 0,
-    tasksCount: 0
+    alertsCount: 0
   });
+  const [tasks, setTasks] = useState<SharedTask[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeToTasks(all => setTasks(all));
+    return unsub;
+  }, []);
+
+  const tasksCount = tasks.filter(t => t.date === new Date().toISOString().split('T')[0]).length;
 
   useEffect(() => {
     const loadUser = async () => {
@@ -155,8 +163,7 @@ export default function CaregiverWelcomePage() {
         
         setStats({
           patientsCount: links?.length || 0,
-          alertsCount: 0, // Can be loaded from alerts table
-          tasksCount: 0   // Can be loaded from tasks
+          alertsCount: 0 // Can be loaded from alerts table
         });
       }
       setIsLoading(false);
@@ -325,7 +332,7 @@ export default function CaregiverWelcomePage() {
                   className="p-6 rounded-2xl bg-gradient-to-br from-violet-500/15 to-violet-500/5 backdrop-blur-xl border border-violet-500/30 shadow-lg shadow-violet-500/10"
                 >
                   <ClipboardList className="w-7 h-7 text-violet-400 mx-auto mb-3" />
-                  <p className="text-3xl font-black text-violet-400 mb-1">{stats.tasksCount}</p>
+                  <p className="text-3xl font-black text-violet-400 mb-1">{tasksCount}</p>
                   <p className="text-xs text-slate-400 font-medium">Today's Tasks</p>
                 </motion.div>
               </motion.div>

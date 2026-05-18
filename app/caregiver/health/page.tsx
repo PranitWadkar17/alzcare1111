@@ -8,16 +8,10 @@ import {
 } from 'lucide-react';
 import { getAllAlerts, subscribeToAlerts } from '@/lib/alert-service';
 import { getLocationUpdates, subscribeLocation, LocationUpdate } from '@/lib/contact-service';
+import { subscribeToVitals, VitalsData } from '@/lib/health-service';
+import { createBrowserSupabaseClient } from '@/lib/supabase';
 
-/* ── Demo vital generators ── */
-function useDemoVital(base: number, range: number, interval = 3000) {
-  const [v, setV] = useState(base);
-  useEffect(() => {
-    const t = setInterval(() => setV(base + (Math.random() - 0.5) * range), interval);
-    return () => clearInterval(t);
-  }, [base, range, interval]);
-  return v;
-}
+const supabase = createBrowserSupabaseClient();
 
 const WEEK_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const demoHRWeek = [71, 74, 68, 76, 73, 70, 72];
@@ -26,18 +20,55 @@ const demoSleepWeek = [6.5, 7.0, 5.8, 7.2, 6.9, 8.1, 7.2];
 const demoActivityWeek = [85, 70, 90, 60, 95, 75, 80];
 
 export default function CaregiverHealthPage() {
-  const hr = useDemoVital(72, 10, 15000);
-  const spo2 = useDemoVital(97, 3, 15000);
-  const temp = useDemoVital(98.4, 1.2, 15000);
-  const bpSys = useDemoVital(120, 12, 15000);
-  const bpDia = useDemoVital(80, 8, 15000);
-  const cogScore = useDemoVital(78, 6, 15000);
-  const sleepHrs = 7.2;
-  const sleepQuality = 85;
+  const [hr, setHr] = useState(72);
+  const [spo2, setSpo2] = useState(97);
+  const [temp, setTemp] = useState(98.4);
+  const [bpSys, setBpSys] = useState(120);
+  const [bpDia, setBpDia] = useState(80);
+  const [cogScore, setCogScore] = useState(78);
+  const [sleepHrs, setSleepHrs] = useState(7.2);
+  const [sleepQuality, setSleepQuality] = useState(85);
 
   const [alerts, setAlerts] = useState<any[]>([]);
   const [lastLoc, setLastLoc] = useState<LocationUpdate | null>(null);
 
+  // Load linked patients and subscribe to vitals
+  useEffect(() => {
+    let unsubscribeVitals: () => void = () => {};
+
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: links } = await supabase
+        .from('patient_caregiver_links')
+        .select('patient_id')
+        .eq('caregiver_id', user.id)
+        .eq('status', 'active');
+
+      if (links && links.length > 0) {
+        const ids = links.map((l: any) => l.patient_id);
+        
+        // Subscribe to real-time vitals
+        unsubscribeVitals = subscribeToVitals(ids, (vitals: VitalsData) => {
+          setHr(vitals.heartRate);
+          setSpo2(vitals.spo2);
+          setTemp(vitals.temp);
+          setBpSys(vitals.bpSys);
+          setBpDia(vitals.bpDia);
+          setCogScore(vitals.cogScore);
+          setSleepHrs(vitals.sleepHrs);
+          setSleepQuality(vitals.sleepQuality);
+        });
+      }
+    };
+
+    init();
+
+    return () => {
+      unsubscribeVitals();
+    };
+  }, []);
 
   useEffect(() => {
     setAlerts(getAllAlerts().filter((a: any) => a.sender === 'patient').slice(-5));
@@ -65,7 +96,7 @@ export default function CaregiverHealthPage() {
 
   const wellnessColor = wellness >= 80 ? '#34d399' : wellness >= 60 ? '#fbbf24' : '#f87171';
 
-  // Health alerts (demo)
+  // Health alerts
   const healthAlerts = useMemo(() => {
     const a: { type: string; color: string; icon: any; msg: string }[] = [];
     if (hr > 95) a.push({ type: 'critical', color: '#f87171', icon: AlertTriangle, msg: `Heart rate elevated: ${hr.toFixed(0)} bpm — check on patient!` });

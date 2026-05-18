@@ -8,6 +8,9 @@ import {
   CheckCircle2, AlertTriangle, Zap, Monitor, BellRing, MapPin,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { createBrowserSupabaseClient } from '@/lib/supabase';
+
+const supabase = createBrowserSupabaseClient();
 
 /* ── Toggle Component ── */
 function Toggle({ value, onChange }: { value: boolean; onChange: () => void }) {
@@ -41,12 +44,13 @@ export default function CaregiverSettingsPage() {
   const [theme, setTheme] = useState('emerald');
   const [saved, setSaved] = useState(false);
 
-  // Load
+  // Load from Supabase user metadata
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
-    try {
-      const s = localStorage.getItem('alzcare_settings');
-      if (s) {
-        const d = JSON.parse(s);
+    supabase.auth.getUser().then((res: any) => {
+      const user = res.data?.user;
+      if (user?.user_metadata?.alzcare_settings) {
+        const d = user.user_metadata.alzcare_settings;
         if (d.sound !== undefined) setSound(d.sound);
         if (d.notifications !== undefined) setNotifications(d.notifications);
         if (d.darkMode !== undefined) setDarkMode(d.darkMode);
@@ -60,19 +64,43 @@ export default function CaregiverSettingsPage() {
         if (d.safeRadius) setSafeRadius(d.safeRadius);
         if (d.language) setLanguage(d.language);
         if (d.theme) setTheme(d.theme);
+      } else {
+        // Fallback to local storage if no metadata found
+        try {
+          const s = localStorage.getItem('alzcare_settings');
+          if (s) {
+            const d = JSON.parse(s);
+            if (d.sound !== undefined) setSound(d.sound);
+            if (d.notifications !== undefined) setNotifications(d.notifications);
+            if (d.darkMode !== undefined) setDarkMode(d.darkMode);
+            if (d.vibration !== undefined) setVibration(d.vibration);
+            if (d.sosAlerts !== undefined) setSosAlerts(d.sosAlerts);
+            if (d.locationAlerts !== undefined) setLocationAlerts(d.locationAlerts);
+            if (d.autoTrack !== undefined) setAutoTrack(d.autoTrack);
+            if (d.quietHoursEnabled !== undefined) setQuietHoursEnabled(d.quietHoursEnabled);
+            if (d.quietStart) setQuietStart(d.quietStart);
+            if (d.quietEnd) setQuietEnd(d.quietEnd);
+            if (d.safeRadius) setSafeRadius(d.safeRadius);
+            if (d.language) setLanguage(d.language);
+            if (d.theme) setTheme(d.theme);
+          }
+        } catch {}
       }
-    } catch { }
+      setMounted(true);
+    });
   }, []);
 
-  // Auto-save
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-
-  // Auto-save (skip first render to prevent blink)
+  // Auto-save to both local and Supabase (skip first render to prevent blink)
   useEffect(() => {
     if (!mounted) return;
     const data = { sound, notifications, darkMode, vibration, sosAlerts, locationAlerts, autoTrack, quietHoursEnabled, quietStart, quietEnd, safeRadius, language, theme };
     localStorage.setItem('alzcare_settings', JSON.stringify(data));
+    
+    // Save to Supabase auth metadata
+    supabase.auth.updateUser({ data: { alzcare_settings: data } }).then((res: any) => {
+      if (res.error) console.error('Failed to save settings to Supabase', res.error);
+    });
+
     setSaved(true);
     const t = setTimeout(() => setSaved(false), 1500);
     return () => clearTimeout(t);
@@ -81,6 +109,7 @@ export default function CaregiverSettingsPage() {
   const clearData = () => {
     if (confirm('This will clear all app data. Are you sure?')) {
       localStorage.clear();
+      supabase.auth.updateUser({ data: { alzcare_settings: null } });
       window.location.reload();
     }
   };

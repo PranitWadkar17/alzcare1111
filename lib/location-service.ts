@@ -1,4 +1,7 @@
 // lib/location-service.ts
+// Multi-patient aware location service.
+// Supports subscriptions across all linked patients for caregivers.
+
 import { createBrowserSupabaseClient } from './supabase';
 import { Location } from '@/types';
 
@@ -10,6 +13,8 @@ export interface LocationData {
   accuracy?: number;
 }
 
+// ── Single-patient operations (patient-side) ──────────────────────────────────
+
 export async function saveLocation(patientId: string, data: LocationData): Promise<void> {
   const { error } = await supabase.from('locations').insert({
     patient_id: patientId,
@@ -20,7 +25,7 @@ export async function saveLocation(patientId: string, data: LocationData): Promi
   });
 
   if (error) {
-    console.error('Error saving location:', error);
+    console.error('[LocationService] Error saving location:', error);
     throw error;
   }
 }
@@ -32,15 +37,14 @@ export async function getLatestLocation(patientId: string): Promise<Location | n
     .eq('patient_id', patientId)
     .order('timestamp', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle(); // safe alternative to .single() — returns null instead of error on no rows
 
   if (error) {
-    if (error.code === 'PGRST116') return null;
-    console.error('Error fetching location:', error);
+    console.error('[LocationService] Error fetching location:', error);
     throw error;
   }
 
-  return data as Location;
+  return data as Location | null;
 }
 
 export async function getLocationHistory(patientId: string): Promise<Location[]> {
@@ -55,7 +59,7 @@ export async function getLocationHistory(patientId: string): Promise<Location[]>
     .order('timestamp', { ascending: true });
 
   if (error) {
-    console.error('Error fetching location history:', error);
+    console.error('[LocationService] Error fetching location history:', error);
     throw error;
   }
 
@@ -73,11 +77,17 @@ export async function cleanupOldLocations(patientId: string): Promise<void> {
     .lt('timestamp', twentyFourHoursAgo.toISOString());
 
   if (error) {
-    console.error('Error cleaning up old locations:', error);
+    console.error('[LocationService] Error cleaning up old locations:', error);
     throw error;
   }
 }
 
+// ── Realtime subscriptions ────────────────────────────────────────────────────
+
+/**
+ * Subscribe to location updates for a single patient.
+ * Returns the Supabase channel (call supabase.removeChannel(channel) to clean up).
+ */
 export function subscribeToLocationUpdates(
   patientId: string,
   callback: (location: Location) => void
@@ -92,7 +102,7 @@ export function subscribeToLocationUpdates(
         table: 'locations',
         filter: `patient_id=eq.${patientId}`,
       },
-      (payload) => {
+      (payload: any) => {
         callback(payload.new as Location);
       }
     )
@@ -101,6 +111,51 @@ export function subscribeToLocationUpdates(
   return channel;
 }
 
+/**
+ * Subscribe to location updates for MULTIPLE patients (caregiver use-case).
+ * Uses patient_id=in.(...) filter when more than one patient is linked.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToLocationUpdatesForPatients(
+  patientIds: string[],
+  callback: (location: Location) => void
+): () => void {
+  if (patientIds.length === 0) return () => {};
+
+  const filter =
+    patientIds.length === 1
+      ? `patient_id=eq.${patientIds[0]}`
+      : `patient_id=in.(${patientIds.join(',')})`;
+
+  const channelName = `location_multi_${patientIds.slice().sort().join('_')}`;
+
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'locations',
+        filter,
+      },
+      (payload: any) => {
+        callback(payload.new as Location);
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
+// ── Caregiver helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Fetch all patient IDs linked to a caregiver (IDs only, no profile data).
+ * For full profile data, use patient-service.ts → getLinkedPatientsForCaregiver().
+ */
 export async function getLinkedPatients(caregiverId: string): Promise<string[]> {
   const { data, error } = await supabase
     .from('patient_caregiver_links')
@@ -109,22 +164,50 @@ export async function getLinkedPatients(caregiverId: string): Promise<string[]> 
     .eq('status', 'active');
 
   if (error) {
-    console.error('Error fetching linked patients:', error);
+    console.error('[LocationService] Error fetching linked patients:', error);
     throw error;
   }
 
-  return data?.map((link) => link.patient_id) || [];
+  return data?.map((link: any) => link.patient_id) || [];
 }
 
+/**
+ * Fetch the latest location record for EACH linked patient.
+ * Returns a map of patientId → Location | null.
+ */
+export async function getLatestLocationsForPatients(
+  patientIds: string[]
+): Promise<Record<string, Location | null>> {
+  if (patientIds.length === 0) return {};
+
+  const result: Record<string, Location | null> = {};
+
+  // Fetch in parallel for all patients
+  await Promise.all(
+    patientIds.map(async patientId => {
+      try {
+        result[patientId] = await getLatestLocation(patientId);
+      } catch {
+        result[patientId] = null;
+      }
+    })
+  );
+
+  return result;
+}
+
+/**
+ * Fetch a single patient's profile (name, email, avatar).
+ */
 export async function getPatientProfile(patientId: string) {
   const { data, error } = await supabase
     .from('profiles')
     .select('id, name, email, avatar_url')
     .eq('id', patientId)
-    .single();
+    .maybeSingle();
 
   if (error) {
-    console.error('Error fetching patient profile:', error);
+    console.error('[LocationService] Error fetching patient profile:', error);
     throw error;
   }
 

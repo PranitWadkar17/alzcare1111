@@ -19,6 +19,7 @@ export interface Profile {
   remember_token?: string;
   avatar_url?: string;
   language: string;
+  caregiver_email?: string;
   created_at: string;
   updated_at: string;
 }

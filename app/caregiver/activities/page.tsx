@@ -258,7 +258,7 @@ export default function CaregiverActivitiesPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm text-white font-medium">{t.message}</p>
-                              <p className="text-[10px] text-slate-600 mt-0.5">Logged by patient</p>
+                              <p className="text-[10px] text-slate-600 mt-0.5">Logged by {t.patient_label || 'patient'}</p>
                             </div>
                             <span className="text-xs text-slate-500 font-mono shrink-0">{t.scheduled_time}</span>
                             {i === 0 && <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">Latest</span>}
@@ -326,6 +326,9 @@ export default function CaregiverActivitiesPage() {
                                 <div key={t.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.03]">
                                   <div className={`p-1 rounded-lg ${cat.bg}`}><cat.icon className={`w-3 h-3 ${cat.color}`} /></div>
                                   <span className="text-sm text-slate-300 flex-1">{t.message}</span>
+                                  <span className="text-[10px] bg-white/5 border border-white/8 text-slate-400 px-2 py-0.5 rounded-lg">
+                                    {t.patient_label || 'Patient'}
+                                  </span>
                                   <span className="text-xs text-slate-600 font-mono">{t.scheduled_time}</span>
                                 </div>
                               );

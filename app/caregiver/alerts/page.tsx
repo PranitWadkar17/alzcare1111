@@ -14,6 +14,7 @@ import {
   subscribeToAlerts, SharedAlert,
 } from '@/lib/alert-service';
 import { useVoiceRecorder, VoicePlayer } from '@/hooks/useVoiceRecorder';
+import VitalsAlertCard from '@/components/vitals-alert-card';
 
 const PRIORITY_CFG = {
   critical: { label: 'Critical', color: 'text-red-400', bg: 'bg-red-500/15', border: 'border-red-500/20', dot: 'bg-red-400', icon: AlertCircle },
@@ -238,7 +239,7 @@ export default function CaregiverAlertsPage() {
                             {a.read && <span className="text-[10px] text-slate-600">✓✓ Read</span>}
                             <span className="text-[10px] text-slate-600 ml-auto">{new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
-                          <p className="text-sm text-white">{a.message}</p>
+                          <VitalsAlertCard message={a.message} />
                           {a.voiceNote && <div className="mt-2"><VoicePlayer src={a.voiceNote} dur={a.voiceDuration} /></div>}
                           {a.lat && a.lng && (
                             <div className="mt-2 flex items-center gap-2">

@@ -11,7 +11,9 @@ import {
 } from '@/lib/contact-service';
 import { sendAlert } from '@/lib/alert-service';
 
-const SAFE_RADIUS_KM = 2;
+import { createBrowserSupabaseClient } from '@/lib/supabase';
+
+const supabase = createBrowserSupabaseClient();
 
 function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371;
@@ -30,10 +32,21 @@ const DEMO_PATIENTS = [
 ];
 
 export default function CaregiverLocationPage() {
+  const [safeRadius, setSafeRadius] = useState<number>(2);
   const [locations, setLocations] = useState<LocationUpdate[]>([]);
   const [now, setNow] = useState(Date.now());
   const [demoAlerts, setDemoAlerts] = useState<{ name: string; msg: string; time: string; type: string }[]>([]);
   const [showDemo, setShowDemo] = useState(true);
+
+  // Load safe radius from Supabase settings
+  useEffect(() => {
+    supabase.auth.getUser().then((res: any) => {
+      const user = res.data?.user;
+      if (user?.user_metadata?.alzcare_settings?.safeRadius) {
+        setSafeRadius(parseFloat(user.user_metadata.alzcare_settings.safeRadius));
+      }
+    });
+  }, []);
 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
 
@@ -68,7 +81,7 @@ export default function CaregiverLocationPage() {
   let homeLoc: { lat: number; lng: number } | null = null;
   try { homeLoc = JSON.parse(localStorage.getItem('alzcare_home_location') || 'null'); } catch {}
   const patientDist = (lastLoc && homeLoc) ? haversine(lastLoc.lat, lastLoc.lng, homeLoc.lat, homeLoc.lng) : null;
-  const patientOutside = patientDist !== null && patientDist > SAFE_RADIUS_KM;
+  const patientOutside = patientDist !== null && patientDist > safeRadius;
 
   return (
     <div className="min-h-screen text-white">
@@ -207,7 +220,7 @@ export default function CaregiverLocationPage() {
               </motion.div>
               {/* Radius label */}
               <div className="absolute bottom-3 right-3 px-2 py-1 rounded bg-white/5 border border-white/10">
-                <p className="text-[9px] text-slate-500">Safe Zone: {SAFE_RADIUS_KM} km radius</p>
+                <p className="text-[9px] text-slate-500">Safe Zone: {safeRadius} km radius</p>
               </div>
               {/* Legend */}
               <div className="absolute top-3 left-3 space-y-1">

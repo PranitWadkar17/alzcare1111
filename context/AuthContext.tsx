@@ -8,7 +8,7 @@ import { UserRole, Profile, AuthState, RegisterData } from '@/types';
 interface AuthContextType extends AuthState {
   // Patient OTP flow
   sendOTP: (email: string, isRegistration?: boolean) => Promise<{ success: boolean; message: string }>;
-  verifyOTP: (email: string, token: string, userData?: { name: string; phone: string }) => Promise<void>;
+  verifyOTP: (email: string, token: string, userData?: { name: string; phone: string; caregiver_email?: string }) => Promise<void>;
   //resendOTP: (email: string) => Promise<{ success: boolean; message: string }>;
   isAuthenticated: boolean;
   // Caregiver password flow
@@ -360,18 +360,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   // PATIENT: Verify OTP
-  const verifyOTP = async (email: string, token: string, userData?: { name: string; phone: string }) => {
+  const verifyOTP = async (email: string, token: string, userData?: { name: string; phone: string; caregiver_email?: string }) => {
     try {
       let data, error;
       try {
         const result = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+        console.log('[Auth] Auth signup/verify result:', result);
         data = result.data;
         error = result.error;
       } catch (fetchErr: any) {
+        console.error(fetchErr);
         throw new Error('Network error verifying OTP. The code may have expired — please request a new OTP.');
       }
 
       if (error) {
+        console.error(error);
         await incrementLoginAttempts(email);
         throw error;
       }
@@ -391,10 +394,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         // REGISTER PATH — create profile with provided userData
-        if (!existingProfile && userData) {
-          const { error: profileError } = await supabase
+        if (userData) {
+          const { error: profileError, data: profileData } = await supabase
             .from('profiles')
-            .insert({
+            .upsert({
               id: data.user.id,
               email,
               name: userData.name,
@@ -406,10 +409,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             });
+            
+          console.log('[Auth] Profile insert result:', { data: profileData, error: profileError });
 
           if (profileError) {
+            console.error('Profile insert error:', profileError.message || profileError, JSON.stringify(profileError));
             await supabase.auth.signOut();
             throw profileError;
+          }
+
+          // Store caregiver email in auth user metadata (since profiles table doesn't have the column)
+          if (userData.caregiver_email) {
+            await supabase.auth.updateUser({
+              data: { caregiver_email: userData.caregiver_email }
+            });
+          }
+
+          // Link caregiver if provided
+          if (userData.caregiver_email) {
+            const { data: caregiver } = await supabase
+              .from('profiles')
+              .select('id, role')
+              .eq('email', userData.caregiver_email)
+              .in('role', ['caregiver_primary', 'caregiver_secondary'])
+              .single();
+
+            if (caregiver) {
+              const linkResult = await supabase
+                .from('patient_caregiver_links')
+                .insert({
+                  patient_id: data.user.id,
+                  caregiver_id: caregiver.id,
+                  relationship: caregiver.role === 'caregiver_primary' ? 'primary' : 'secondary',
+                  status: 'active',
+                  invited_by: 'patient',
+                  permissions: {
+                    view_meds: true,
+                    edit_meds: caregiver.role === 'caregiver_primary',
+                    view_location: true,
+                    edit_notes: caregiver.role === 'caregiver_primary',
+                    view_tasks: true,
+                    edit_tasks: caregiver.role === 'caregiver_primary',
+                    trigger_sos: true,
+                  },
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+                
+              console.log('[Auth] Link insert result:', linkResult);
+              
+              if (linkResult.error) {
+                console.error(linkResult.error);
+              }
+            }
           }
         }
 
@@ -428,6 +480,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await sendLoginNotification(email);
       }
     } catch (error: any) {
+      console.error(error);
       throw new Error(error.message || 'Invalid OTP.');
     }
   };
@@ -448,14 +501,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email: data.email,
         password: data.password!,
       });
+      
+      console.log('[Auth] Auth signup result:', { data: authData, error: authError });
 
-      if (authError) throw authError;
+      if (authError) {
+        console.error(authError);
+        throw authError;
+      }
 
       if (authData.user) {
         // Create caregiver profile
         const { error: profileError } = await supabase
           .from('profiles')
-          .insert({
+          .upsert({
             id: authData.user.id,
             email: data.email,
             name: data.name,
@@ -467,8 +525,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           });
+          
+        console.log('[Auth] Profile insert result:', { error: profileError });
 
-        if (profileError) throw profileError;
+        if (profileError) {
+          console.error('Profile insert error:', profileError.message || profileError, JSON.stringify(profileError));
+          throw profileError;
+        }
 
         // Link to patient if provided
         if (data.patient_email) {
@@ -480,7 +543,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             .single();
 
           if (patient) {
-            await supabase
+            const linkResult = await supabase
               .from('patient_caregiver_links')
               .insert({
                 patient_id: patient.id,
@@ -500,6 +563,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               });
+              
+            console.log('[Auth] Link insert result:', linkResult);
+            if (linkResult.error) {
+              console.error(linkResult.error);
+            }
           }
         }
 
@@ -508,6 +576,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await fetchProfile(authData.user.id);
       }
     } catch (error: any) {
+      console.error(error);
       throw new Error(error.message || 'Failed to create account.');
     }
   };

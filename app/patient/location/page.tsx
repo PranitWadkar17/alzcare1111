@@ -10,7 +10,9 @@ import {
 } from '@/lib/contact-service';
 import { sendAlert } from '@/lib/alert-service';
 
-const SAFE_RADIUS_KM = 2;
+import { createBrowserSupabaseClient } from '@/lib/supabase';
+
+const supabase = createBrowserSupabaseClient();
 
 function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371;
@@ -21,6 +23,8 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
 }
 
 export default function PatientLocationPage() {
+  const [safeRadius, setSafeRadius] = useState<number>(2);
+  const [hasAlertedOutside, setHasAlertedOutside] = useState(false);
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
   const [accuracy, setAccuracy] = useState<number | null>(null);
@@ -31,6 +35,16 @@ export default function PatientLocationPage() {
   const [homeLng, setHomeLng] = useState<number | null>(null);
   const autoRef = useRef<NodeJS.Timeout | null>(null);
   const [now, setNow] = useState(Date.now());
+
+  // Load safe radius from Supabase settings
+  useEffect(() => {
+    supabase.auth.getUser().then((res: any) => {
+      const user = res.data?.user;
+      if (user?.user_metadata?.alzcare_settings?.safeRadius) {
+        setSafeRadius(parseFloat(user.user_metadata.alzcare_settings.safeRadius));
+      }
+    });
+  }, []);
 
   // Clock
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
@@ -79,7 +93,25 @@ export default function PatientLocationPage() {
   };
 
   const distHome = (homeLat && homeLng && lat && lng) ? haversine(lat, lng, homeLat, homeLng) : null;
-  const isOutside = distHome !== null && distHome > SAFE_RADIUS_KM;
+  const isOutside = distHome !== null && distHome > safeRadius;
+
+  // Auto geofence SOS trigger
+  useEffect(() => {
+    if (isOutside && !hasAlertedOutside && lat && lng) {
+      sendAlert({
+        sender: 'patient',
+        message: `🚨 Geofence Breach — Patient left safe zone! Currently ${distHome?.toFixed(2)} km from home.`,
+        priority: 'critical',
+        type: 'sos',
+        lat,
+        lng
+      });
+      setHasAlertedOutside(true);
+    } else if (!isOutside) {
+      setHasAlertedOutside(false);
+    }
+  }, [isOutside, lat, lng, distHome, hasAlertedOutside]);
+
   const myHistory = locations.slice(-20).reverse();
 
   return (
@@ -199,7 +231,7 @@ export default function PatientLocationPage() {
               {!isOutside && distHome !== null && (
                 <div className="flex items-center gap-2 text-emerald-400 text-sm">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>You&apos;re within the safe zone ({SAFE_RADIUS_KM} km radius)</span>
+                  <span>You&apos;re within the safe zone ({safeRadius} km radius)</span>
                 </div>
               )}
             </div>

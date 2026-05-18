@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   Home,
@@ -15,11 +15,33 @@ import {
   ChevronLeft,
   Heart,
 } from 'lucide-react';
+import { createBrowserSupabaseClient } from '@/lib/supabase';
+import { startVitalsBroadcaster } from '@/lib/health-service';
+
+const supabase = createBrowserSupabaseClient();
 
 export default function PatientLayout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+
+  // Background Vitals Broadcaster
+  useEffect(() => {
+    let stopBroadcaster: () => void = () => {};
+
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        stopBroadcaster = startVitalsBroadcaster(user.id);
+      }
+    };
+
+    init();
+
+    return () => {
+      stopBroadcaster();
+    };
+  }, []);
 
   // Hide sidebar on welcome page
   const isWelcomePage = pathname === '/patient/welcome';

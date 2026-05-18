@@ -1,83 +1,385 @@
 // lib/task-service.ts
-// Shared task/reminder service — localStorage backed, Supabase-ready
-// Uses BroadcastChannel + CustomEvent + StorageEvent + visibilitychange
-// for bulletproof real-time sync across tabs
+// Supabase Real-time synced Shared task/reminder service
+// Multi-patient caregiver architecture: 1 caregiver ↔ N patients
+
+import { supabase } from './supabase';
 
 export type TaskStatus = 'pending' | 'done' | 'missed';
 
 export interface SharedTask {
   id: string;
-  patient_label: string;   // patient's display name (used for matching)
-  caregiver_label: string; // caregiver name or 'patient' for self-logs
+  patient_id?: string;       // which patient this task belongs to
+  patient_label: string;
+  caregiver_label: string;
   message: string;
-  scheduled_time: string;  // "HH:MM"
-  date: string;            // "YYYY-MM-DD"
+  scheduled_time: string;
+  date: string;
   status: TaskStatus;
   created_at: string;
   updated_at: string;
 }
 
-const TASKS_KEY = 'alzcare_shared_tasks';
-const EVENT_NAME = 'alzcare_tasks_updated';
-const CHANNEL_NAME = 'alzcare_tasks_sync';
+// ── Module state ──────────────────────────────────────────────────────────────
 
-// ── BroadcastChannel (cross-tab, most reliable modern API) ──
-let _channel: BroadcastChannel | null = null;
-function getChannel(): BroadcastChannel | null {
-  if (typeof window === 'undefined') return null;
-  if (!_channel) {
-    try { _channel = new BroadcastChannel(CHANNEL_NAME); } catch { /* Safari < 15.4 */ }
-  }
-  return _channel;
+let _tasks: SharedTask[] = [];
+let _listeners: Set<(tasks: SharedTask[]) => void> = new Set();
+
+// ALL patient IDs the current user tracks (array even for single patient)
+let _patientIds: string[] = [];
+// The "write" patient ID — only used when creating tasks (patient's own ID)
+let _currentPatientId: string | null = null;
+let _userRole: 'patient' | 'caregiver' | null = null;
+let _subscription: any = null;
+let _initialized = false;
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+function notify() {
+  _listeners.forEach(cb => cb([..._tasks]));
 }
 
-function generateId(): string {
-  return `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
-// ── Dispatch: notify ALL listeners (same-tab + cross-tab) ──
-function dispatch(tasks: SharedTask[]) {
-  if (typeof window === 'undefined') return;
-
-  // 1. Persist to localStorage
-  localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
-
-  // 2. Same-tab: fire a CustomEvent (always works, synchronous)
-  window.dispatchEvent(new CustomEvent(EVENT_NAME));
-
-  // 3. Cross-tab: BroadcastChannel (modern browsers)
-  try { getChannel()?.postMessage('updated'); } catch {}
-
-  // 4. Cross-tab fallback: the native StorageEvent fires automatically
-  //    in other tabs when localStorage.setItem is called — no action needed
-}
-
-// ── Read helpers ──
-export function getAllTasks(): SharedTask[] {
-  if (typeof window === 'undefined') return [];
+function mapTaskToShared(t: any): SharedTask {
+  let meta: any = {};
   try {
-    const raw = localStorage.getItem(TASKS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+    if (t.description) meta = JSON.parse(t.description);
+  } catch (_) {}
+
+  return {
+    id: t.id,
+    patient_id: t.patient_id,
+    patient_label: meta.patient_label || 'Patient',
+    caregiver_label: meta.caregiver_label || 'Caregiver',
+    message: t.title,
+    scheduled_time: t.scheduled_time,
+    date:
+      meta.date ||
+      (t.created_at ? t.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+    status: meta.status || (t.completed ? 'done' : 'pending'),
+    created_at: t.created_at || new Date().toISOString(),
+    updated_at: t.completed_at || t.created_at || new Date().toISOString(),
+  };
+}
+
+function mapSharedToTask(s: SharedTask, patientId: string) {
+  return {
+    id: s.id,
+    patient_id: patientId,
+    title: s.message,
+    description: JSON.stringify({
+      patient_label: s.patient_label,
+      caregiver_label: s.caregiver_label,
+      date: s.date,
+      status: s.status,
+    }),
+    steps: [],
+    scheduled_time: s.scheduled_time,
+    completed: s.status === 'done',
+    completed_at: s.status === 'done' ? new Date().toISOString() : null,
+    created_at: s.created_at,
+  };
+}
+
+/** Build a Supabase realtime filter for one or many patient IDs */
+function buildPatientFilter(): string {
+  if (_patientIds.length === 1) {
+    return `patient_id=eq.${_patientIds[0]}`;
+  }
+  return `patient_id=in.(${_patientIds.join(',')})`;
+}
+
+// ── Initialization ────────────────────────────────────────────────────────────
+
+async function initService() {
+  if (typeof window === 'undefined') return;
+  console.log('[TaskService] Initializing...');
+
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+  if (!user) {
+    console.log('[TaskService] No user found.', userErr);
+    return;
+  }
+
+  const { data: profiles, error: profileErr } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id);
+  if (!profiles || profiles.length === 0) {
+    console.log('[TaskService] No profile found.', profileErr);
+    return;
+  }
+  const profile = profiles[0];
+
+  _userRole = profile.role as 'patient' | 'caregiver';
+  console.log('[TaskService] Role:', _userRole);
+
+  if (_userRole === 'patient') {
+    _currentPatientId = user.id;
+    _patientIds = [user.id];
+  } else {
+    // Caregiver: fetch ALL linked patients (multi-patient support)
+    const { data: links, error: linksErr } = await supabase
+      .from('patient_caregiver_links')
+      .select('patient_id')
+      .eq('caregiver_id', user.id)
+      .eq('status', 'active');
+
+    if (linksErr) console.error('[TaskService] Error fetching links:', linksErr);
+
+    if (links && links.length > 0) {
+      _patientIds = links.map((l: any) => l.patient_id);
+      _currentPatientId = _patientIds[0]; // legacy compat — used for task creation
+    } else {
+      console.log('[TaskService] No active patient links found for caregiver.');
+    }
+  }
+
+  console.log('[TaskService] Tracking patient IDs:', _patientIds);
+
+  if (_patientIds.length > 0) {
+    await fetchTasksFromSupabase();
+    setupSubscription();
+    _initialized = true;
+  } else {
+    // Retry once after 2 s — links may not be committed yet
+    console.log('[TaskService] Retrying link fetch in 2s...');
+    setTimeout(async () => {
+      if (_patientIds.length > 0) return; // already resolved
+
+      if (_userRole === 'patient') {
+        const {
+          data: { user: u },
+        } = await supabase.auth.getUser();
+        if (u) {
+          _currentPatientId = u.id;
+          _patientIds = [u.id];
+        }
+      } else {
+        const {
+          data: { user: u },
+        } = await supabase.auth.getUser();
+        if (u) {
+          const { data: retryLinks } = await supabase
+            .from('patient_caregiver_links')
+            .select('patient_id')
+            .eq('caregiver_id', u.id)
+            .eq('status', 'active');
+          if (retryLinks && retryLinks.length > 0) {
+            _patientIds = retryLinks.map((l: any) => l.patient_id);
+            _currentPatientId = _patientIds[0];
+          }
+        }
+      }
+
+      console.log('[TaskService] Retry patient IDs:', _patientIds);
+      if (_patientIds.length > 0) {
+        await fetchTasksFromSupabase();
+        setupSubscription();
+        _initialized = true;
+      }
+    }, 2000);
   }
 }
 
+// ── Supabase Data Fetching ────────────────────────────────────────────────────
+
+async function fetchTasksFromSupabase() {
+  if (_patientIds.length === 0) {
+    console.log('[TaskService] fetchTasks aborted: no patient IDs');
+    return;
+  }
+
+  console.log('[TaskService] Fetching tasks for patients:', _patientIds);
+
+  // Fetch tasks across all linked patients
+  let query = supabase.from('tasks').select('*');
+  if (_patientIds.length === 1) {
+    query = query.eq('patient_id', _patientIds[0]);
+  } else {
+    query = query.in('patient_id', _patientIds);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('[TaskService] Fetch error:', error);
+  } else if (data) {
+    console.log(`[TaskService] Fetched ${data.length} tasks from ${_patientIds.length} patient(s).`);
+    _tasks = data.map(mapTaskToShared);
+    notify();
+  }
+}
+
+// ── Realtime Subscriptions ────────────────────────────────────────────────────
+
+function broadcastUpdate(payload: any) {
+  if (_subscription && _subscription.state === 'SUBSCRIBED') {
+    _subscription
+      .send({ type: 'broadcast', event: 'task_sync', payload })
+      .catch((err: any) => console.error('[TaskService] Broadcast send error:', err));
+  } else if (_subscription) {
+    setTimeout(() => {
+      if (_subscription?.state === 'SUBSCRIBED') {
+        _subscription
+          .send({ type: 'broadcast', event: 'task_sync', payload })
+          .catch((err: any) => console.error('[TaskService] Broadcast send error:', err));
+      }
+    }, 1000);
+  }
+}
+
+function setupSubscription() {
+  if (_patientIds.length === 0) return;
+
+  if (_subscription) {
+    supabase.removeChannel(_subscription);
+    _subscription = null;
+  }
+
+  // Channel name: use all patient IDs to avoid collisions on shared channels
+  const channelId = _patientIds.slice().sort().join('_');
+  console.log('[TaskService] Setting up realtime subscription, channel:', channelId);
+
+  _subscription = supabase
+    .channel(`tasks_rt_${channelId}`, {
+      config: { broadcast: { self: false } },
+    })
+    .on('broadcast', { event: 'task_sync' }, (payload: any) => {
+      console.log('[TaskService] Broadcast received:', payload);
+      const { action, task, id } = payload.payload;
+      if (action === 'insert') {
+        if (!_tasks.find(t => t.id === task.id)) {
+          _tasks = [..._tasks, task];
+          notify();
+        }
+      } else if (action === 'update') {
+        _tasks = _tasks.map(t => (t.id === task.id ? task : t));
+        notify();
+      } else if (action === 'delete') {
+        _tasks = _tasks.filter(t => t.id !== id);
+        notify();
+      }
+    })
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'tasks',
+        filter: buildPatientFilter(),
+      },
+      (payload: any) => {
+        if (payload.eventType === 'INSERT') {
+          const newTask = mapTaskToShared(payload.new);
+          if (!_tasks.find(t => t.id === newTask.id)) {
+            _tasks = [..._tasks, newTask];
+            notify();
+          }
+        } else if (payload.eventType === 'UPDATE') {
+          const updated = mapTaskToShared(payload.new);
+          _tasks = _tasks.map(t => (t.id === updated.id ? updated : t));
+          notify();
+        } else if (payload.eventType === 'DELETE') {
+          _tasks = _tasks.filter(t => t.id !== payload.old.id);
+          notify();
+        }
+      }
+    )
+    .subscribe();
+}
+
+// ── Auth State Listener ───────────────────────────────────────────────────────
+
+supabase.auth.onAuthStateChange((event: any, session: any) => {
+  if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+    if (session?.user) {
+      // Reset state then re-init
+      _patientIds = [];
+      _currentPatientId = null;
+      _userRole = null;
+      _initialized = false;
+      initService();
+    }
+  } else if (event === 'SIGNED_OUT') {
+    _patientIds = [];
+    _currentPatientId = null;
+    _userRole = null;
+    _tasks = [];
+    _initialized = false;
+    if (_subscription) {
+      supabase.removeChannel(_subscription);
+      _subscription = null;
+    }
+    notify();
+  }
+});
+
+// Auto-init on first import (page reloads)
+initService();
+
+// ── Async Helper ──────────────────────────────────────────────────────────────
+
+/** Wait up to 5 s for a patient ID to be resolved (patient write operations). */
+async function ensurePatientId(): Promise<string | null> {
+  let waited = 0;
+  while (!_currentPatientId && waited < 50) {
+    await new Promise(r => setTimeout(r, 100));
+    waited++;
+  }
+  return _currentPatientId;
+}
+
+// ── Public Read API ───────────────────────────────────────────────────────────
+
+/** All tasks across all linked patients. */
+export function getAllTasks(): SharedTask[] {
+  return _tasks;
+}
+
+/** Tasks for today across all linked patients. */
 export function getTodaysTasks(): SharedTask[] {
   const today = new Date().toISOString().split('T')[0];
-  return getAllTasks().filter(t => t.date === today);
+  return _tasks.filter(t => t.date === today);
 }
 
-// ── Write helpers ──
+/** Tasks filtered to a specific patient ID. */
+export function getTasksForPatient(patientId: string): SharedTask[] {
+  return _tasks.filter(t => t.patient_id === patientId);
+}
+
+/** All patient IDs currently being tracked. */
+export function getLinkedPatientIds(): string[] {
+  return [..._patientIds];
+}
+
+/** Whether the service has finished initializing. */
+export function isInitialized(): boolean {
+  return _initialized;
+}
+
+// ── Public Write API ──────────────────────────────────────────────────────────
+
 export function createTask(data: {
   patient_label: string;
   caregiver_label: string;
   message: string;
   scheduled_time: string;
   date?: string;
+  patient_id?: string;
 }): SharedTask {
   const task: SharedTask = {
-    id: generateId(),
+    id: uuidv4(),
+    patient_id: data.patient_id,
     patient_label: data.patient_label,
     caregiver_label: data.caregiver_label,
     message: data.message,
@@ -87,57 +389,83 @@ export function createTask(data: {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  const tasks = getAllTasks();
-  tasks.push(task);
-  dispatch(tasks);
+
+  // Optimistic update
+  _tasks = [..._tasks, task];
+  notify();
+  broadcastUpdate({ action: 'insert', task });
+
+  // Background DB sync
+  const targetPatientId = data.patient_id;
+  ensurePatientId().then(patientId => {
+    const finalPatientId = targetPatientId || patientId;
+    if (finalPatientId) {
+      supabase
+        .from('tasks')
+        .insert([mapSharedToTask(task, finalPatientId)])
+        .then(({ error }: any) => {
+          if (error) console.error('[TaskService] Failed to sync new task:', error);
+        });
+    }
+  });
+
   return task;
 }
 
 export function updateTaskStatus(id: string, status: TaskStatus): void {
-  const tasks = getAllTasks();
-  const idx = tasks.findIndex(t => t.id === id);
-  if (idx !== -1) {
-    tasks[idx].status = status;
-    tasks[idx].updated_at = new Date().toISOString();
-    dispatch(tasks);
-  }
+  const idx = _tasks.findIndex(t => t.id === id);
+  if (idx === -1) return;
+
+  const updatedTask = { ..._tasks[idx], status, updated_at: new Date().toISOString() };
+  _tasks = [..._tasks];
+  _tasks[idx] = updatedTask;
+  notify();
+  broadcastUpdate({ action: 'update', task: updatedTask });
+
+  const targetPatientId = updatedTask.patient_id;
+  ensurePatientId().then(patientId => {
+    const finalPatientId = targetPatientId || patientId;
+    if (finalPatientId) {
+      supabase
+        .from('tasks')
+        .update(mapSharedToTask(updatedTask, finalPatientId))
+        .eq('id', id)
+        .then(({ error }: any) => {
+          if (error) console.error('[TaskService] Failed to sync task update:', error);
+        });
+    }
+  });
 }
 
 export function deleteTask(id: string): void {
-  dispatch(getAllTasks().filter(t => t.id !== id));
+  const idx = _tasks.findIndex(t => t.id === id);
+  const targetPatientId = idx !== -1 ? _tasks[idx].patient_id : null;
+
+  _tasks = _tasks.filter(t => t.id !== id);
+  notify();
+  broadcastUpdate({ action: 'delete', id });
+
+  ensurePatientId().then(patientId => {
+    const finalPatientId = targetPatientId || patientId;
+    if (finalPatientId) {
+      supabase
+        .from('tasks')
+        .delete()
+        .eq('id', id)
+        .then(({ error }: any) => {
+          if (error) console.error('[TaskService] Failed to sync task deletion:', error);
+        });
+    }
+  });
 }
 
-// ── Subscribe: listen for changes from ALL sources ──
+// ── Subscribe ─────────────────────────────────────────────────────────────────
+
+/** Subscribe to task updates. Fires immediately with current state. Returns unsubscribe fn. */
 export function subscribeToTasks(cb: (tasks: SharedTask[]) => void): () => void {
-  const refresh = () => {
-    try { cb(getAllTasks()); } catch { cb([]); }
-  };
-
-  // 1. Same-tab updates (from dispatch's CustomEvent)
-  const onCustom = () => refresh();
-  window.addEventListener(EVENT_NAME, onCustom);
-
-  // 2. Cross-tab updates via BroadcastChannel
-  const ch = getChannel();
-  const onBroadcast = () => refresh();
-  ch?.addEventListener('message', onBroadcast);
-
-  // 3. Cross-tab fallback via native StorageEvent
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === TASKS_KEY) refresh();
-  };
-  window.addEventListener('storage', onStorage);
-
-  // 4. Refresh when tab becomes visible (catches anything missed)
-  const onVisible = () => {
-    if (document.visibilityState === 'visible') refresh();
-  };
-  document.addEventListener('visibilitychange', onVisible);
-
+  _listeners.add(cb);
+  cb([..._tasks]); // fire immediately with current state
   return () => {
-    window.removeEventListener(EVENT_NAME, onCustom);
-    ch?.removeEventListener('message', onBroadcast);
-    window.removeEventListener('storage', onStorage);
-    document.removeEventListener('visibilitychange', onVisible);
+    _listeners.delete(cb);
   };
 }

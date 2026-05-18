@@ -11,11 +11,14 @@ import {
   createTask, getAllTasks, deleteTask, updateTaskStatus,
   subscribeToTasks, SharedTask, TaskStatus,
 } from '@/lib/task-service';
+import { getLinkedPatientsForCaregiver, PatientProfile } from '@/lib/patient-service';
+import { createBrowserSupabaseClient } from '@/lib/supabase';
+
+const supabase = createBrowserSupabaseClient();
 
 const DEMO_PATIENTS = [
   'Pranit Wadkar',
   'Abhishek chavan ',
-  
 ];
 
 const STATUS_CFG: Record<TaskStatus, {
@@ -55,13 +58,38 @@ export default function CaregiverRemindersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [customPatient, setCustomPatient] = useState('');
   const [showQuick, setShowQuick]  = useState(false);
+  const [linkedPatients, setLinkedPatients] = useState<PatientProfile[]>([]);
+  const [loadingPatients, setLoadingPatients] = useState(true);
 
   const [form, setForm] = useState({
-    patient_label:  DEMO_PATIENTS[0],
+    patient_label:  '',
     message:        '',
     scheduled_time: '',
     date:           new Date().toISOString().split('T')[0],
   });
+
+  // Load linked patients dynamically
+  useEffect(() => {
+    const loadPatients = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const patientsList = await getLinkedPatientsForCaregiver(user.id);
+          setLinkedPatients(patientsList);
+          if (patientsList.length > 0) {
+            setForm(p => ({ ...p, patient_label: patientsList[0].name }));
+          } else {
+            setForm(p => ({ ...p, patient_label: DEMO_PATIENTS[0] }));
+          }
+        }
+      } catch (err) {
+        console.error('[Reminders] Error loading linked patients:', err);
+      } finally {
+        setLoadingPatients(false);
+      }
+    };
+    loadPatients();
+  }, []);
 
   useEffect(() => {
     setTasks(getAllTasks());
@@ -74,12 +102,17 @@ export default function CaregiverRemindersPage() {
     const label = form.patient_label === '__custom__' ? customPatient.trim() : form.patient_label;
     if (!label || !form.message.trim() || !form.scheduled_time) return;
     setSubmitting(true);
+
+    // Find if the selected patient label corresponds to a real linked patient to pass patient_id
+    const targetPatient = linkedPatients.find(p => p.name === label);
+
     createTask({
       patient_label:   label,
       caregiver_label: 'Caregiver',
       message:         form.message.trim(),
       scheduled_time:  form.scheduled_time,
       date:            form.date,
+      patient_id:      targetPatient?.id || undefined
     });
     setTasks(getAllTasks());
     setForm(p => ({ ...p, message: '', scheduled_time: '' }));
@@ -181,9 +214,15 @@ export default function CaregiverRemindersPage() {
                   onChange={e => setForm(p => ({ ...p, patient_label: e.target.value }))}
                   className={inputCls + ' cursor-pointer'}
                 >
-                  {DEMO_PATIENTS.map(n => (
-                    <option key={n} value={n} className="bg-slate-900">{n}</option>
-                  ))}
+                  {linkedPatients.length > 0 ? (
+                    linkedPatients.map(p => (
+                      <option key={p.id} value={p.name} className="bg-slate-900">{p.name}</option>
+                    ))
+                  ) : (
+                    DEMO_PATIENTS.map(n => (
+                      <option key={n} value={n} className="bg-slate-900">{n}</option>
+                    ))
+                  )}
                   <option value="__custom__" className="bg-slate-900">+ Enter custom name…</option>
                 </select>
                 <AnimatePresence>

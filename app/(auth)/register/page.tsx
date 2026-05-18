@@ -41,6 +41,7 @@ function RegisterContent() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [patientEmail, setPatientEmail] = useState('');
+  const [caregiverEmail, setCaregiverEmail] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -99,6 +100,12 @@ function RegisterContent() {
     if (!isValidEmail(email)) return 'Please enter a valid email address';
     if (!phone.trim()) return 'Phone number is required';
     if (!isValidPhone(phone)) return 'Phone must be exactly 10 digits';
+    
+    if (role === 'patient') {
+      if (!caregiverEmail.trim()) return 'Caregiver Email is required';
+      if (!isValidEmail(caregiverEmail)) return 'Please enter a valid caregiver email address';
+    }
+
     if (role === 'caregiver') {
       if (!password) return 'Password is required';
       if (!isStrongPassword(password))
@@ -127,6 +134,8 @@ function RegisterContent() {
           setCanResend(false);
         } else {
           setError(result.message);
+          setLoading(false);
+          return;
         }
       } else {
         await signUpCaregiver({
@@ -139,8 +148,11 @@ function RegisterContent() {
         });
         setStep('success');
       }
-    } catch (err: any) {
-      setError(err.message || 'Registration failed. Please try again.');
+    } catch (error: any) {
+      console.error(error);
+      setError(error.message || 'Registration failed. Please try again.');
+      setLoading(false);
+      return;
     } finally {
       setLoading(false);
     }
@@ -156,10 +168,13 @@ function RegisterContent() {
     setError('');
     try {
       // Pass name and phone so AuthContext creates the profile row
-      await verifyOTP(email, otp, { name, phone });
+      await verifyOTP(email, otp, { name, phone, caregiver_email: caregiverEmail.trim() });
       setStep('success');
-    } catch (err: any) {
-      setError(err.message || 'Invalid OTP. Please try again.');
+    } catch (error: any) {
+      console.error(error);
+      setError(error.message || 'Invalid OTP. Please try again.');
+      setLoading(false);
+      return;
     } finally {
       setLoading(false);
     }
@@ -177,9 +192,14 @@ function RegisterContent() {
         setCanResend(false);
       } else {
         setError(result.message);
+        setLoading(false);
+        return;
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to resend OTP');
+    } catch (error: any) {
+      console.error(error);
+      setError(error.message || 'Failed to resend OTP');
+      setLoading(false);
+      return;
     } finally {
       setLoading(false);
     }
@@ -364,6 +384,25 @@ function RegisterContent() {
                     <p className="text-emerald-400 text-xs mt-1">✓ Valid phone number</p>
                   )}
                 </div>
+
+                {/* Patient only fields */}
+                {role === 'patient' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                      Caregiver Email
+                    </label>
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="email"
+                        value={caregiverEmail}
+                        onChange={e => setCaregiverEmail(e.target.value)}
+                        placeholder="caregiver@example.com"
+                        className="w-full pl-11 pr-4 py-3.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400/50 focus:ring-2 focus:ring-emerald-400/20 focus:ring-offset-2 focus:ring-offset-slate-950 transition-all text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* Caregiver only fields */}
                 {role === 'caregiver' && (

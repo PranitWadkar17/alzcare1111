@@ -14,7 +14,8 @@ import {
   Menu,
   AlertTriangle,
   ChevronLeft,
-  Heart
+  Heart,
+  Brain
 } from 'lucide-react';
 
 export default function CaregiverLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +31,7 @@ export default function CaregiverLayout({ children }: { children: React.ReactNod
     { name: 'Patients', icon: Users, path: '/caregiver/patients' },
     { name: 'Location Tracking', icon: MapPin, path: '/caregiver/location' },
     { name: 'Health Status', icon: HeartPulse, path: '/caregiver/health' },
+    { name: 'Caregiver Wellness', icon: Brain, path: '/caregiver/wellness' },
     { name: 'Settings', icon: Settings, path: '/caregiver/settings' },
   ];
 
