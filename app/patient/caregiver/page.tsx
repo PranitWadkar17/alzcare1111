@@ -49,13 +49,20 @@ export default function PatientCaregiverPage() {
       if (user) {
         setPatientId(user.id);
         // Get caregiver ID from patient_caregiver_links
-        const { data: link } = await supabase
+        const { data: link, error } = await supabase
           .from('patient_caregiver_links')
           .select('caregiver_id')
           .eq('patient_id', user.id)
           .eq('status', 'active')
           .single();
-        if (link) setCaregiverId(link.caregiver_id);
+        
+        if (link && link.caregiver_id) {
+          setCaregiverId(link.caregiver_id);
+        } else {
+          // If no caregiver link found, set a default to show the button
+          console.log('No caregiver link found:', error);
+          setCaregiverId(user.id);
+        }
       }
     });
   }, []);
