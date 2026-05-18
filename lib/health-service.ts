@@ -95,17 +95,20 @@ export function subscribeToVitals(patientIds: string[], cb: (vitals: VitalsData)
     : `patient_id=in.(${patientIds.join(',')})`;
 
   _subscription = supabase.channel(`vitals_realtime_${patientIds.slice().sort().join('_')}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts', filter }, (payload: any) => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts', filter }, (payload: any) => {
       try {
+        console.log('[HealthService] realtime vitals event:', payload);
         const row = payload.new;
-        if (row.type === 'system') {
+        if (row && row.type === 'system') {
           const parsed = JSON.parse(row.message);
           if (parsed._is_vitals) {
             _latestVitals = parsed;
             cb(parsed);
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error(err);
+      }
     })
     .subscribe();
 

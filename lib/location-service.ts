@@ -16,17 +16,19 @@ export interface LocationData {
 // ── Single-patient operations (patient-side) ──────────────────────────────────
 
 export async function saveLocation(patientId: string, data: LocationData): Promise<void> {
-  const { error } = await supabase.from('locations').insert({
+  const { data: insertedData, error } = await supabase.from('locations').insert({
     patient_id: patientId,
     lat: data.lat,
     lng: data.lng,
     accuracy: data.accuracy,
     timestamp: new Date().toISOString(),
-  });
+  }).select();
 
   if (error) {
-    console.error('[LocationService] Error saving location:', error);
+    console.error(error);
     throw error;
+  } else {
+    console.log(insertedData);
   }
 }
 
@@ -97,12 +99,13 @@ export function subscribeToLocationUpdates(
     .on(
       'postgres_changes',
       {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
         table: 'locations',
         filter: `patient_id=eq.${patientId}`,
       },
       (payload: any) => {
+        console.log('[LocationService] realtime event:', payload);
         callback(payload.new as Location);
       }
     )
@@ -134,12 +137,13 @@ export function subscribeToLocationUpdatesForPatients(
     .on(
       'postgres_changes',
       {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
         table: 'locations',
         filter,
       },
       (payload: any) => {
+        console.log('[LocationService] realtime multi event:', payload);
         callback(payload.new as Location);
       }
     )

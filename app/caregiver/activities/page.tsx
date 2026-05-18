@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronRight, Footprints, Eye, Shield, Flame,
   BarChart3, Bell,
 } from 'lucide-react';
-import { getAllTasks, subscribeToTasks, SharedTask } from '@/lib/task-service';
+import { getAllTasks, subscribeToTasks, refreshTasks, SharedTask } from '@/lib/task-service';
 
 /* ── Category detection for icons ── */
 const CATEGORIES: { match: string[]; icon: typeof Pill; color: string; bg: string }[] = [
@@ -55,7 +55,15 @@ export default function CaregiverActivitiesPage() {
   useEffect(() => {
     setAllTasks(getAllTasks());
     const unsub = subscribeToTasks(all => setAllTasks(all));
-    return unsub;
+    
+    refreshTasks();
+    const handleFocus = () => refreshTasks();
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      unsub();
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   /* derived */

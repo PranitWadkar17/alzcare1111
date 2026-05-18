@@ -633,7 +633,7 @@ export default function CaregiverWelcomePage() {
               onClick={() => setStep(i)}
               className={`h-2.5 rounded-full transition-all duration-300 ${
                 step === i
-                  ? 'bg-gradient-to-r from-blue-400 to-cyan-400 w-10 shadow-lg shadow-blue-400/50'
+                  ? 'bg-gradient-to-r from-emerald-400 to-cyan-400 w-10 shadow-lg shadow-emerald-400/50'
                   : 'bg-white/20 w-2.5 hover:bg-white/40'
               }`}
             />

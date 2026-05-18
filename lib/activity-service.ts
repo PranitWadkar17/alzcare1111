@@ -120,7 +120,7 @@ export function subscribeToActivitiesForPatients(
   patientIds: string[],
   callback: (payload: any) => void
 ): () => void {
-  if (patientIds.length === 0) return () => {};
+  if (patientIds.length === 0) return () => { };
 
   const filter =
     patientIds.length === 1

@@ -93,9 +93,9 @@ function mapSharedAlertToRow(a: SharedAlert, patientId: string) {
   });
 
   let dbPriority: 'high' | 'medium' | 'low' = 'low';
-  if (a.priority === 'critical' || a.priority === 'high') {
+  if (a.priority === 'critical' || (a.priority as string) === 'high') {
     dbPriority = 'high';
-  } else if (a.priority === 'warning' || a.priority === 'medium') {
+  } else if (a.priority === 'warning' || (a.priority as string) === 'medium') {
     dbPriority = 'medium';
   } else {
     dbPriority = 'low';
@@ -157,7 +157,13 @@ async function fetchAlertsFromSupabase() {
 
   const { data, error } = await query;
   if (!error && data) {
-    _alerts = data.map(mapRowToSharedAlert);
+    _alerts = data.filter((row: any) => {
+      try {
+        const parsed = JSON.parse(row.message);
+        if (parsed._is_vitals) return false;
+      } catch (e) {}
+      return true;
+    }).map(mapRowToSharedAlert);
     window.dispatchEvent(new CustomEvent(EVENT_NAME));
   }
 }
@@ -167,8 +173,22 @@ function setupSupabaseSubscription() {
 
   _subscription = supabase.channel(`alerts_realtime_sync_${_patientIds.slice().sort().join('_')}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts', filter: buildPatientFilter() }, (payload: any) => {
+      // Check if it's a vitals payload
+      const row = payload.new || payload.old;
+      if (row && row.message) {
+        try {
+          const parsed = JSON.parse(row.message);
+          if (parsed._is_vitals) return;
+        } catch (e) {}
+      }
+
       if (payload.eventType === 'INSERT') {
-        _alerts.push(mapRowToSharedAlert(payload.new));
+        const exists = _alerts.some(a => a.id === payload.new.id);
+        if (!exists) {
+          _alerts.push(mapRowToSharedAlert(payload.new));
+        } else {
+          _alerts = _alerts.map(a => a.id === payload.new.id ? mapRowToSharedAlert(payload.new) : a);
+        }
       } else if (payload.eventType === 'UPDATE') {
         _alerts = _alerts.map(a => a.id === payload.new.id ? mapRowToSharedAlert(payload.new) : a);
       } else if (payload.eventType === 'DELETE') {
@@ -245,11 +265,11 @@ async function insertAlertIntoSupabase(alert: SharedAlert) {
         };
       });
 
-      const { error: insertError } = await supabase.from('alerts').insert(rows);
+      const { data: insertedData, error: insertError } = await supabase.from('alerts').insert(rows).select();
       if (insertError) {
-        console.error('[AlertService] Error inserting patient alerts:', insertError.message);
+        console.error(insertError);
       } else {
-        console.log(`[AlertService] Alert sent successfully to ${rows.length} caregivers.`);
+        console.log(insertedData);
       }
     } else {
       // Caregiver role
@@ -279,11 +299,11 @@ async function insertAlertIntoSupabase(alert: SharedAlert) {
         caregiver_id: caregiverId
       };
 
-      const { error: insertError } = await supabase.from('alerts').insert(rowWithCaregiver);
+      const { data: insertedData, error: insertError } = await supabase.from('alerts').insert(rowWithCaregiver).select();
       if (insertError) {
-        console.error('[AlertService] Error inserting caregiver alert:', insertError.message);
+        console.error(insertError);
       } else {
-        console.log(`[AlertService] Alert sent successfully from caregiver to patient ${patientId}`);
+        console.log(insertedData);
       }
     }
   } catch (err) {
@@ -318,11 +338,15 @@ export function sendAlert(data: {
     type: data.type ?? 'message',
   };
 
-  // Optimistic UI update
-  _alerts.push(alert);
-  window.dispatchEvent(new CustomEvent(EVENT_NAME));
+  const isVitals = data.message.includes('_is_vitals');
 
-  // Async DB insert
+  if (!isVitals) {
+    // Optimistic UI update
+    _alerts.push(alert);
+    window.dispatchEvent(new CustomEvent(EVENT_NAME));
+  }
+
+  // Async DB insert (vitals will still be inserted here)
   insertAlertIntoSupabase(alert);
 
   return alert;

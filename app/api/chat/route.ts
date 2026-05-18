@@ -2,6 +2,58 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+const TAVILY_API_URL = 'https://api.tavily.com/search';
+
+// Function to perform web search using Tavily
+async function searchWeb(query: string): Promise<string> {
+  try {
+    console.log('🔍 Searching web for:', query);
+    
+    const response = await fetch(TAVILY_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        api_key: TAVILY_API_KEY,
+        query: query,
+        search_depth: 'basic',
+        include_answer: true,
+        include_raw_content: false,
+        max_results: 3,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Tavily API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('✅ Search results received');
+
+    // Format search results
+    let searchContext = '';
+    
+    if (data.answer) {
+      searchContext += `Direct Answer: ${data.answer}\n\n`;
+    }
+
+    if (data.results && data.results.length > 0) {
+      searchContext += 'Search Results:\n';
+      data.results.slice(0, 3).forEach((result: any, index: number) => {
+        searchContext += `${index + 1}. ${result.title}\n`;
+        searchContext += `   ${result.content}\n`;
+        searchContext += `   Source: ${result.url}\n\n`;
+      });
+    }
+
+    return searchContext || 'No relevant information found.';
+  } catch (error: any) {
+    console.error('Tavily search error:', error);
+    return 'Search temporarily unavailable. Using AI knowledge instead.';
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,6 +65,21 @@ export async function POST(request: NextRequest) {
       ? `Current GPS Location: Latitude ${patientContext.location.lat.toFixed(6)}, Longitude ${patientContext.location.lng.toFixed(6)}\nGPS Tracking: ${patientContext.isTracking ? 'Active ✅' : 'Inactive ❌'}`
       : 'Location not available';
 
+    // Get the last user message
+    const lastUserMessage = messages[messages.length - 1]?.content || '';
+
+    // Determine if we need to search the web
+    const needsWebSearch = 
+      /weather|temperature|forecast|news|current|today|now|latest|price|cost|time|open|close|hours|phone number|address|location of|where is|how to|recipe|directions to|what is|who is|when is|stock|score|result/i.test(lastUserMessage) &&
+      !/my location|send location|call|sos|emergency|reminder|activity|log/i.test(lastUserMessage);
+
+    let searchResults = '';
+    
+    if (needsWebSearch) {
+      console.log('🌐 Web search triggered for:', lastUserMessage);
+      searchResults = await searchWeb(lastUserMessage);
+    }
+
     // Build system prompt with patient context
     const systemPrompt = `You are AlzCare AI Assistant, a compassionate healthcare companion for Alzheimer's patients.
 
@@ -21,6 +88,8 @@ PATIENT CONTEXT:
 - Today's Activities: ${patientContext?.todayActivities || 0} logged
 - Pending Reminders: ${patientContext?.pendingReminders || 0}
 - ${locationInfo}
+
+${searchResults ? `\nWEB SEARCH RESULTS:\n${searchResults}\n` : ''}
 
 LOCATION HANDLING:
 When user asks about their location:
@@ -39,6 +108,7 @@ When user asks "where am I" or "what's my location":
 
 YOUR CAPABILITIES:
 - Answer health and wellness questions
+- Search the web for current information (weather, news, facts, etc.)
 - Provide exact GPS coordinates
 - Generate Google Maps links for directions
 - Help with location and navigation
@@ -55,16 +125,29 @@ COMMUNICATION STYLE:
 - Use emojis occasionally 😊
 - Always be encouraging and positive
 - For location questions, be SPECIFIC with coordinates
+- When using web search results, cite sources naturally
 
 IMPORTANT ACTIONS YOU CAN TRIGGER:
 When user asks to:
 - "send my location" or "share location" → Respond with: ACTION:SEND_LOCATION
-- "call caregiver" or "need help" → Respond with: ACTION:CALL_CAREGIVER
+- "call caregiver" or "need help" or "call for help" → Respond with: ACTION:CALL_CAREGIVER
+- "emergency" or "SOS" or "help me" or "urgent" or "I need immediate help" → Respond with: ACTION:SEND_SOS
 - "log activity" or "I took medicine" → Respond with: ACTION:LOG_ACTIVITY:[activity name]
 - "show reminders" → Respond with: ACTION:SHOW_REMINDERS
 - "directions to [place]" or "how to get to [place]" → Respond with: ACTION:DIRECTIONS:[place]
 - "show on map" or "open map" → Respond with: ACTION:OPEN_MAP
 - "go to [page]" → Respond with: ACTION:NAVIGATE:[page]
+
+EMERGENCY HANDLING:
+When user says "emergency", "SOS", "help me urgently", or similar:
+1. Immediately respond with: ACTION:SEND_SOS
+2. Tell them: "🆘 Emergency alert sent! Your caregiver has been notified via SMS with your location. Help is on the way!"
+
+WEB SEARCH USAGE:
+- If web search results are provided above, use them to answer the question
+- Synthesize information from multiple sources
+- Keep answers simple and clear for Alzheimer's patients
+- If search results are not relevant, use your general knowledge
 
 Always be helpful, kind, and supportive. You're here to make their day easier! 💙`;
 
@@ -95,7 +178,8 @@ Always be helpful, kind, and supportive. You're here to make their day easier! �
 
     return NextResponse.json({ 
       message: aiMessage,
-      success: true 
+      success: true,
+      searchPerformed: needsWebSearch,
     });
 
   } catch (error: any) {

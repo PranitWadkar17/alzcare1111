@@ -6,9 +6,8 @@ import {
   AlertTriangle, CheckCircle2, Users, Eye, Bell, Locate, Target,
 } from 'lucide-react';
 import {
-  getLocationUpdates, subscribeLocation, LocationUpdate,
-  sendLocationUpdate,
-} from '@/lib/contact-service';
+  getLocationHistory, getLinkedPatients, subscribeToLocationUpdatesForPatients,
+} from '@/lib/location-service';
 import { sendAlert } from '@/lib/alert-service';
 
 import { createBrowserSupabaseClient } from '@/lib/supabase';
@@ -33,28 +32,46 @@ const DEMO_PATIENTS = [
 
 export default function CaregiverLocationPage() {
   const [safeRadius, setSafeRadius] = useState<number>(2);
-  const [locations, setLocations] = useState<LocationUpdate[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
+  const [patientId, setPatientId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [demoAlerts, setDemoAlerts] = useState<{ name: string; msg: string; time: string; type: string }[]>([]);
   const [showDemo, setShowDemo] = useState(true);
 
   // Load safe radius from Supabase settings
   useEffect(() => {
-    supabase.auth.getUser().then((res: any) => {
+    supabase.auth.getUser().then(async (res: any) => {
       const user = res.data?.user;
-      if (user?.user_metadata?.alzcare_settings?.safeRadius) {
-        setSafeRadius(parseFloat(user.user_metadata.alzcare_settings.safeRadius));
+      if (user) {
+        if (user.user_metadata?.alzcare_settings?.safeRadius) {
+          setSafeRadius(parseFloat(user.user_metadata.alzcare_settings.safeRadius));
+        }
+        try {
+          const linkedIds = await getLinkedPatients(user.id);
+          if (linkedIds.length > 0) {
+            setPatientId(linkedIds[0]);
+          }
+        } catch (e) {
+          console.error('[CaregiverLocation] Error fetching linked patients:', e);
+        }
       }
     });
   }, []);
 
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-
   useEffect(() => {
-    setLocations(getLocationUpdates());
-    const u = subscribeLocation(a => setLocations(a));
-    return () => { u(); };
-  }, []);
+    if (!patientId) return;
+
+    // Fetch history from Supabase to ensure caregiver has latest rows even if realtime fails
+    getLocationHistory(patientId).then(history => {
+      setLocations(history);
+    });
+
+    const unsubscribe = subscribeToLocationUpdatesForPatients([patientId], (newLoc) => {
+      setLocations(prev => [...prev, newLoc]);
+    });
+
+    return unsubscribe;
+  }, [patientId]);
 
   // Demo SOS alerts
   useEffect(() => {
@@ -71,10 +88,10 @@ export default function CaregiverLocationPage() {
     sendAlert({ sender: 'caregiver', message: '📍 Please share your location', priority: 'warning', type: 'message' });
   };
 
-  const patientLocs = locations.filter(l => l.sender === 'patient');
+  const patientLocs = locations.map(l => ({ ...l, sender: 'patient' }));
   const lastLoc = patientLocs.length > 0 ? patientLocs[patientLocs.length - 1] : null;
-  const autoLocs = patientLocs.filter(l => l.autoShare);
-  const isAutoSharing = autoLocs.length > 0 && (Date.now() - new Date(autoLocs[autoLocs.length - 1]?.timestamp).getTime()) < 60000;
+  // Fallback to recent location logic for auto-tracking UI
+  const isAutoSharing = lastLoc && (Date.now() - new Date(lastLoc.timestamp).getTime()) < 60000;
   const history = patientLocs.slice(-20).reverse();
 
   // Check safe zone for real patient

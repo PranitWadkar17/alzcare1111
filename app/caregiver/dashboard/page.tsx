@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { getLocationUpdates, subscribeLocation, LocationUpdate } from '@/lib/contact-service';
 import { useRouter } from 'next/navigation';
-import { getAllTasks, getTodaysTasks, subscribeToTasks, SharedTask } from '@/lib/task-service';
+import { getAllTasks, getTodaysTasks, subscribeToTasks, refreshTasks, SharedTask } from '@/lib/task-service';
 
 /* ─────────────────────────────────────────────────────────
    Particle Canvas  — same visual language as the landing page
@@ -81,7 +81,16 @@ export default function CaregiverDashboard() {
   useEffect(() => {
     setTasks(getAllTasks());
     const unsub = subscribeToTasks(all => setTasks(all));
-    return unsub;
+    
+    // Fallback fetch on mount and focus
+    refreshTasks();
+    const handleFocus = () => refreshTasks();
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      unsub();
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   useEffect(() => {

@@ -6,8 +6,8 @@ import {
   AlertTriangle, CheckCircle2, Compass, ArrowUpRight, Eye, Locate,
 } from 'lucide-react';
 import {
-  sendLocationUpdate, getLocationUpdates, subscribeLocation, LocationUpdate,
-} from '@/lib/contact-service';
+  saveLocation, getLocationHistory, subscribeToLocationUpdates
+} from '@/lib/location-service';
 import { sendAlert } from '@/lib/alert-service';
 
 import { createBrowserSupabaseClient } from '@/lib/supabase';
@@ -28,11 +28,12 @@ export default function PatientLocationPage() {
   const [lat, setLat] = useState<number | null>(null);
   const [lng, setLng] = useState<number | null>(null);
   const [accuracy, setAccuracy] = useState<number | null>(null);
-  const [locations, setLocations] = useState<LocationUpdate[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
   const [autoShare, setAutoShare] = useState(false);
   const [sending, setSending] = useState(false);
   const [homeLat, setHomeLat] = useState<number | null>(null);
   const [homeLng, setHomeLng] = useState<number | null>(null);
+  const [patientId, setPatientId] = useState<string | null>(null);
   const autoRef = useRef<NodeJS.Timeout | null>(null);
   const [now, setNow] = useState(Date.now());
 
@@ -40,8 +41,11 @@ export default function PatientLocationPage() {
   useEffect(() => {
     supabase.auth.getUser().then((res: any) => {
       const user = res.data?.user;
-      if (user?.user_metadata?.alzcare_settings?.safeRadius) {
-        setSafeRadius(parseFloat(user.user_metadata.alzcare_settings.safeRadius));
+      if (user) {
+        setPatientId(user.id);
+        if (user.user_metadata?.alzcare_settings?.safeRadius) {
+          setSafeRadius(parseFloat(user.user_metadata.alzcare_settings.safeRadius));
+        }
       }
     });
   }, []);
@@ -62,21 +66,33 @@ export default function PatientLocationPage() {
   // Load home
   useEffect(() => {
     try { const h = JSON.parse(localStorage.getItem('alzcare_home_location') || 'null'); if (h) { setHomeLat(h.lat); setHomeLng(h.lng); } } catch {}
-    setLocations(getLocationUpdates().filter(l => l.sender === 'patient'));
-    const u = subscribeLocation(a => setLocations(a.filter(l => l.sender === 'patient')));
-    return () => { u(); };
   }, []);
+
+  useEffect(() => {
+    if (!patientId) return;
+    
+    // Fetch initial history
+    getLocationHistory(patientId).then(hist => {
+      setLocations(hist.map(l => ({ ...l, sender: 'patient' })));
+    });
+
+    const sub = subscribeToLocationUpdates(patientId, (loc) => {
+      setLocations(prev => [...prev, { ...loc, sender: 'patient' }]);
+    });
+
+    return () => { supabase.removeChannel(sub); };
+  }, [patientId]);
 
   // Auto-share
   useEffect(() => {
-    if (autoShare && lat && lng) {
-      sendLocationUpdate({ lat, lng, timestamp: new Date().toISOString(), sender: 'patient', autoShare: true });
+    if (autoShare && lat && lng && patientId) {
+      saveLocation(patientId, { lat, lng, accuracy: accuracy || undefined });
       autoRef.current = setInterval(() => {
-        if (lat && lng) sendLocationUpdate({ lat, lng, timestamp: new Date().toISOString(), sender: 'patient', autoShare: true });
+        if (lat && lng && patientId) saveLocation(patientId, { lat, lng, accuracy: accuracy || undefined });
       }, 30000);
     } else { if (autoRef.current) clearInterval(autoRef.current); }
     return () => { if (autoRef.current) clearInterval(autoRef.current); };
-  }, [autoShare, lat, lng]);
+  }, [autoShare, lat, lng, patientId, accuracy]);
 
   const setHome = () => {
     if (!lat || !lng) return;
@@ -85,9 +101,9 @@ export default function PatientLocationPage() {
   };
 
   const shareNow = () => {
-    if (!lat || !lng) return;
+    if (!lat || !lng || !patientId) return;
     setSending(true);
-    sendLocationUpdate({ lat, lng, timestamp: new Date().toISOString(), sender: 'patient' });
+    saveLocation(patientId, { lat, lng, accuracy: accuracy || undefined });
     sendAlert({ sender: 'patient', message: '📍 Shared live location', priority: 'info', lat, lng, type: 'message' });
     setTimeout(() => setSending(false), 1500);
   };

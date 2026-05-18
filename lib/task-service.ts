@@ -17,6 +17,7 @@ export interface SharedTask {
   status: TaskStatus;
   created_at: string;
   updated_at: string;
+  completed_at?: string | null;
 }
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ function mapTaskToShared(t: any): SharedTask {
   let meta: any = {};
   try {
     if (t.description) meta = JSON.parse(t.description);
-  } catch (_) {}
+  } catch (_) { }
 
   return {
     id: t.id,
@@ -65,6 +66,7 @@ function mapTaskToShared(t: any): SharedTask {
     status: meta.status || (t.completed ? 'done' : 'pending'),
     created_at: t.created_at || new Date().toISOString(),
     updated_at: t.completed_at || t.created_at || new Date().toISOString(),
+    completed_at: t.completed_at || null,
   };
 }
 
@@ -82,12 +84,12 @@ function mapSharedToTask(s: SharedTask, patientId: string) {
     steps: [],
     scheduled_time: s.scheduled_time,
     completed: s.status === 'done',
-    completed_at: s.status === 'done' ? new Date().toISOString() : null,
+    completed_at: s.status === 'done' ? (s.completed_at || new Date().toISOString()) : null,
     created_at: s.created_at,
   };
 }
 
-/** Build a Supabase realtime filter for one or many patient IDs */
+/** Optional filter, removed for reliability. We do client-side filtering instead. */
 function buildPatientFilter(): string {
   if (_patientIds.length === 1) {
     return `patient_id=eq.${_patientIds[0]}`;
@@ -255,7 +257,7 @@ function setupSubscription() {
       config: { broadcast: { self: false } },
     })
     .on('broadcast', { event: 'task_sync' }, (payload: any) => {
-      console.log('[TaskService] Broadcast received:', payload);
+      console.log('[TaskService] Realtime Broadcast received:', payload);
       const { action, task, id } = payload.payload;
       if (action === 'insert') {
         if (!_tasks.find(t => t.id === task.id)) {
@@ -276,9 +278,17 @@ function setupSubscription() {
         event: '*',
         schema: 'public',
         table: 'tasks',
-        filter: buildPatientFilter(),
       },
       (payload: any) => {
+        console.log('[TaskService] Realtime Postgres change received:', payload);
+        
+        // Client-side filtering to ensure reliability
+        const row = payload.new || payload.old;
+        if (row && row.patient_id && !_patientIds.includes(row.patient_id)) {
+          console.log('[TaskService] Ignoring Postgres change for untracked patient_id:', row.patient_id);
+          return;
+        }
+
         if (payload.eventType === 'INSERT') {
           const newTask = mapTaskToShared(payload.new);
           if (!_tasks.find(t => t.id === newTask.id)) {
@@ -295,7 +305,9 @@ function setupSubscription() {
         }
       }
     )
-    .subscribe();
+    .subscribe((status: string) => {
+      console.log(`[TaskService] Subscription status for channel tasks_rt_${channelId}:`, status);
+    });
 }
 
 // ── Auth State Listener ───────────────────────────────────────────────────────
@@ -367,6 +379,14 @@ export function isInitialized(): boolean {
   return _initialized;
 }
 
+/** Fallback to manually refresh tasks from DB */
+export async function refreshTasks(): Promise<void> {
+  console.log('[TaskService] Manual refresh requested.');
+  if (_patientIds.length > 0) {
+    await fetchTasksFromSupabase();
+  }
+}
+
 // ── Public Write API ──────────────────────────────────────────────────────────
 
 export function createTask(data: {
@@ -416,7 +436,13 @@ export function updateTaskStatus(id: string, status: TaskStatus): void {
   const idx = _tasks.findIndex(t => t.id === id);
   if (idx === -1) return;
 
-  const updatedTask = { ..._tasks[idx], status, updated_at: new Date().toISOString() };
+  const now = new Date().toISOString();
+  const updatedTask = { 
+    ..._tasks[idx], 
+    status, 
+    updated_at: now,
+    completed_at: status === 'done' ? now : null 
+  };
   _tasks = [..._tasks];
   _tasks[idx] = updatedTask;
   notify();
@@ -432,6 +458,7 @@ export function updateTaskStatus(id: string, status: TaskStatus): void {
         .eq('id', id)
         .then(({ error }: any) => {
           if (error) console.error('[TaskService] Failed to sync task update:', error);
+          else console.log('[TaskService] Successfully synced task update to Supabase.');
         });
     }
   });

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   createTask, getAllTasks, deleteTask, updateTaskStatus,
-  subscribeToTasks, SharedTask, TaskStatus,
+  subscribeToTasks, refreshTasks, SharedTask, TaskStatus,
 } from '@/lib/task-service';
 import { getLinkedPatientsForCaregiver, PatientProfile } from '@/lib/patient-service';
 import { createBrowserSupabaseClient } from '@/lib/supabase';
@@ -94,7 +94,15 @@ export default function CaregiverRemindersPage() {
   useEffect(() => {
     setTasks(getAllTasks());
     const unsub = subscribeToTasks(all => setTasks(all));
-    return unsub;
+    
+    refreshTasks();
+    const handleFocus = () => refreshTasks();
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      unsub();
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -14,6 +14,7 @@ import {
   Menu,
   ChevronLeft,
   Heart,
+  Brain,
 } from 'lucide-react';
 import { createBrowserSupabaseClient } from '@/lib/supabase';
 import { startVitalsBroadcaster } from '@/lib/health-service';
@@ -49,6 +50,7 @@ export default function PatientLayout({ children }: { children: React.ReactNode 
   const menuItems = [
     { name: 'Home', icon: Home, path: '/patient/dashboard' },
     { name: 'My Activities', icon: ClipboardList, path: '/patient/activities' },
+     { name: 'Mind Games', icon: Brain, path: '/patient/mind-games' },
     { name: 'Reminders', icon: Bell, path: '/patient/reminders' },
     { name: 'Alerts', icon: AlertTriangle, path: '/patient/alerts' },
     { name: 'Caregiver', icon: Users, path: '/patient/caregiver' },

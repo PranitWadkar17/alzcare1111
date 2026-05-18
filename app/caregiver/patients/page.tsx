@@ -12,7 +12,7 @@ import {
   getCalls, subscribeCalls, CallRecord,
 } from '@/lib/contact-service';
 import { getAllAlerts, sendAlert, subscribeToAlerts, SharedAlert } from '@/lib/alert-service';
-import { getAllTasks, subscribeToTasks, SharedTask } from '@/lib/task-service';
+import { getAllTasks, subscribeToTasks, refreshTasks, SharedTask } from '@/lib/task-service';
 import {
   getLinkedPatientsForCaregiver,
   subscribeToLinkedPatientsChanges,
@@ -77,7 +77,15 @@ export default function CaregiverPatientsPage() {
     const u3 = subscribeCalls(a => setCalls(a));
     const u4 = subscribeToAlerts(a => setAlerts(a));
     const u5 = subscribeToTasks(a => setTasks(a));
-    return () => { u2(); u3(); u4(); u5(); };
+    
+    refreshTasks();
+    const handleFocus = () => refreshTasks();
+    window.addEventListener('focus', handleFocus);
+    
+    return () => { 
+      u2(); u3(); u4(); u5(); 
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // ── Messaging ──

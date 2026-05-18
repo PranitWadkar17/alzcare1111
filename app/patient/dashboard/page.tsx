@@ -11,6 +11,7 @@ import {
 import { useLocationTracker } from '@/hooks/useLocationTracker';
 import { LocationStatus } from '@/components/patient/LocationStatus';
 import AIChatbot from '@/components/patient/AIChatbot';
+import { CallCaregiverButton } from '@/components/CallCaregiverButton';
 import { createBrowserSupabaseClient } from '@/lib/supabase';
 import {
   createTask, getTodaysTasks, subscribeToTasks, SharedTask,
@@ -74,6 +75,7 @@ const TIPS = [
 
 export default function PatientDashboard() {
   const [patientId,setPatientId] = useState('');
+  const [caregiverId,setCaregiverId] = useState('');
   const [tasks,setTasks] = useState<SharedTask[]>([]);
   const [logged,setLogged] = useState<Set<string>>(new Set());
   const [time,setTime] = useState('');
@@ -81,9 +83,33 @@ export default function PatientDashboard() {
   const [calling,setCalling] = useState(false);
   const [locSent,setLocSent] = useState(false);
   const [tipIdx,setTipIdx] = useState(0);
+  const [sendingSMS, setSendingSMS] = useState(false);
+  const [smsStatus, setSmsStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const router = useRouter();
 
-  useEffect(()=>{supabase.auth.getUser().then(({data:{user}}: {data:{user: any}})=>{if(user)setPatientId(user.id);});},[]);
+  useEffect(()=>{
+    supabase.auth.getUser().then(async ({data:{user}}: {data:{user: any}})=>{
+      if(user){
+        setPatientId(user.id);
+        // Get caregiver ID from patient_caregiver_links
+        const {data:link, error} = await supabase
+          .from('patient_caregiver_links')
+          .select('caregiver_id')
+          .eq('patient_id', user.id)
+          .eq('status', 'active')
+          .single();
+        
+        if(link && link.caregiver_id) {
+          setCaregiverId(link.caregiver_id);
+        } else {
+          // If no caregiver link found, set a default or show error
+          console.log('No caregiver link found:', error);
+          // Set patient ID as caregiver ID temporarily to show the button
+          setCaregiverId(user.id);
+        }
+      }
+    });
+  },[]);
 
   useEffect(()=>{
     const u=()=>{const n=new Date();setTime(n.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
@@ -105,8 +131,79 @@ export default function PatientDashboard() {
     setLogged(p=>new Set(p).add(name));setTasks(getTodaysTasks());
   };
 
-  const callCaregiver=()=>{setCalling(true);setTimeout(()=>setCalling(false),3000);};
+  const callCaregiver = async () => {
+    // Trigger Twilio call via API when called from AI chatbot
+    if (!patientId || !caregiverId) {
+      console.log('Patient ID or Caregiver ID not available');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/twilio/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          caregiverId,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        console.log('Call initiated successfully from AI chatbot');
+      } else {
+        console.error('Call failed:', data.error);
+      }
+    } catch (error: any) {
+      console.error('Call error:', error);
+    }
+  };
+
   const sendLocation=()=>{refreshLocation();setLocSent(true);setTimeout(()=>setLocSent(false),3000);};
+
+  const sendSOSAlert = async () => {
+    if (!patientId || sendingSMS) return;
+    
+    setSendingSMS(true);
+    setSmsStatus('sending');
+    
+    try {
+      const response = await fetch('/api/twilio/sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          type: 'sos',
+          lat: lat || null,
+          lng: lng || null,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setSmsStatus('success');
+        setTimeout(() => setSmsStatus('idle'), 3000);
+      } else {
+        throw new Error(data.error || 'Failed to send SMS');
+      }
+    } catch (error: any) {
+      console.error('SMS failed:', error);
+      setSmsStatus('error');
+      setTimeout(() => setSmsStatus('idle'), 3000);
+    } finally {
+      setSendingSMS(false);
+    }
+  };
+
+  const handleSOSClick = () => {
+    // Send SMS alert
+    sendSOSAlert();
+    // Send location
+    sendLocation();
+    // Note: Voice call is handled by CallCaregiverButton component separately
+  };
 
   const caregiverTasks=tasks.filter(t=>t.caregiver_label!=='patient');
   const selfLogs=tasks.filter(t=>t.caregiver_label==='patient');
@@ -195,7 +292,7 @@ export default function PatientDashboard() {
         </motion.div>
 
         {/* ── PREMIUM STATS ROW ── */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {/* Wellness Score - Cinematic Card */}
           <motion.div 
             initial={{opacity:0,y:30}} 
@@ -242,50 +339,28 @@ export default function PatientDashboard() {
             </div>
           </motion.div>
 
-          {/* Call Caregiver - Premium Action Card */}
-          <motion.div 
-            initial={{opacity:0,y:30}} 
-            animate={{opacity:1,y:0}} 
-            transition={{delay:0.15, duration:0.5}}
-            whileHover={{scale:1.02,y:-4}} 
-            whileTap={{scale:0.98}} 
-            onClick={callCaregiver}
-            className={`group p-7 rounded-3xl cursor-pointer relative overflow-hidden transition-all duration-300 shadow-2xl ${
-              calling 
-                ? 'bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border-2 border-emerald-400/40 shadow-emerald-500/30' 
-                : 'bg-gradient-to-br from-white/[0.08] to-white/[0.02] backdrop-blur-2xl border border-white/10 hover:border-emerald-400/30 shadow-black/20'
-            }`}
-          >
-            <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-emerald-400/10 blur-3xl group-hover:bg-emerald-400/20 transition-all duration-500"/>
-            
-            <div className="relative flex flex-col items-center text-center gap-4">
-              <div className={`p-5 rounded-3xl transition-all duration-300 ${
-                calling
-                  ?'bg-gradient-to-br from-emerald-400/30 to-teal-400/30 animate-pulse shadow-2xl shadow-emerald-500/40'
-                  :'bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-500 shadow-2xl shadow-emerald-500/40 group-hover:shadow-emerald-500/60 group-hover:scale-110'
-              }`}>
-                <Phone className="w-8 h-8 text-white"/>
-              </div>
-              <div>
-                <p className="text-base font-black text-white mb-1">{calling?'Calling...':'Call Caregiver'}</p>
-                <p className="text-xs text-slate-400 font-medium">{calling?'Connecting you now':'Tap to call for help'}</p>
-              </div>
-              {calling && (
-                <motion.div 
-                  initial={{scale:0, opacity:0}} 
-                  animate={{scale:1, opacity:1}} 
-                  className="flex items-center gap-2 text-xs text-emerald-300 font-bold"
-                >
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"/>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"/>
-                  </span>
-                  Ringing caregiver...
-                </motion.div>
-              )}
-            </div>
-          </motion.div>
+          {/* Call Caregiver - Twilio Integration */}
+         <motion.div 
+  initial={{ opacity: 0, y: 30 }} 
+  animate={{ opacity: 1, y: 0 }} 
+  transition={{ delay: 0.15, duration: 0.5 }}
+  className="group p-7 rounded-3xl relative overflow-hidden transition-all duration-300 shadow-2xl bg-gradient-to-br from-white/[0.08] to-white/[0.02] backdrop-blur-2xl border border-white/10 hover:border-emerald-400/30 shadow-black/20"
+>
+  <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-emerald-400/10 blur-3xl group-hover:bg-emerald-400/20 transition-all duration-500" />
 
+  <div className="relative flex flex-col items-center text-center gap-4">
+    {patientId && caregiverId ? (
+      <CallCaregiverButton 
+        patientId={patientId} 
+        caregiverId={caregiverId}
+      />
+    ) : (
+      <div className="text-center">
+        <p className="text-sm text-slate-400">Loading...</p>
+      </div>
+    )}
+  </div>
+</motion.div>
           {/* Send Location - Premium Action Card */}
           <motion.div 
             initial={{opacity:0,y:30}} 
@@ -329,36 +404,93 @@ export default function PatientDashboard() {
           animate={{opacity:1,y:0}} 
           transition={{delay:0.25, duration:0.5}}
           whileHover={{scale:1.01, y:-2}}
-          className="group p-6 rounded-3xl bg-gradient-to-br from-red-500/15 via-red-500/10 to-rose-500/5 backdrop-blur-xl border-2 border-red-500/30 flex items-center justify-between relative overflow-hidden shadow-2xl shadow-red-500/20"
+          className={`group p-6 rounded-3xl backdrop-blur-xl border-2 flex items-center justify-between relative overflow-hidden shadow-2xl transition-all duration-300 ${
+            smsStatus === 'success' 
+              ? 'bg-gradient-to-br from-emerald-500/20 via-emerald-500/15 to-teal-500/10 border-emerald-500/40 shadow-emerald-500/30'
+              : smsStatus === 'error'
+              ? 'bg-gradient-to-br from-orange-500/20 via-orange-500/15 to-red-500/10 border-orange-500/40 shadow-orange-500/30'
+              : 'bg-gradient-to-br from-red-500/15 via-red-500/10 to-rose-500/5 border-red-500/30 shadow-red-500/20'
+          }`}
         >
           {/* Pulsing glow effect */}
           <motion.div
             animate={{
-              opacity: [0.3, 0.6, 0.3],
-              scale: [1, 1.05, 1],
+              opacity: smsStatus === 'sending' ? [0.3, 0.6, 0.3] : [0.3, 0.6, 0.3],
+              scale: smsStatus === 'sending' ? [1, 1.05, 1] : [1, 1.05, 1],
             }}
             transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-            className="absolute inset-0 bg-gradient-to-r from-red-500/10 to-rose-500/10 blur-xl"
+            className={`absolute inset-0 blur-xl ${
+              smsStatus === 'success' 
+                ? 'bg-gradient-to-r from-emerald-500/10 to-teal-500/10'
+                : smsStatus === 'error'
+                ? 'bg-gradient-to-r from-orange-500/10 to-red-500/10'
+                : 'bg-gradient-to-r from-red-500/10 to-rose-500/10'
+            }`}
           />
           
           <div className="relative flex items-center gap-4">
-            <div className="p-3.5 rounded-2xl bg-gradient-to-br from-red-400/30 to-rose-400/30 shadow-lg shadow-red-500/30">
-              <AlertTriangle className="w-6 h-6 text-red-300"/>
+            <div className={`p-3.5 rounded-2xl shadow-lg transition-all duration-300 ${
+              smsStatus === 'success'
+                ? 'bg-gradient-to-br from-emerald-400/30 to-teal-400/30 shadow-emerald-500/30'
+                : smsStatus === 'error'
+                ? 'bg-gradient-to-br from-orange-400/30 to-red-400/30 shadow-orange-500/30'
+                : 'bg-gradient-to-br from-red-400/30 to-rose-400/30 shadow-red-500/30'
+            }`}>
+              {smsStatus === 'success' ? (
+                <CheckCircle2 className="w-6 h-6 text-emerald-300"/>
+              ) : smsStatus === 'error' ? (
+                <AlertTriangle className="w-6 h-6 text-orange-300"/>
+              ) : (
+                <AlertTriangle className="w-6 h-6 text-red-300"/>
+              )}
             </div>
             <div>
-              <p className="text-base font-black text-red-200">Emergency SOS</p>
-              <p className="text-xs text-slate-400 font-medium mt-0.5">Alert your caregiver immediately</p>
+              <p className={`text-base font-black transition-colors duration-300 ${
+                smsStatus === 'success' ? 'text-emerald-200' : smsStatus === 'error' ? 'text-orange-200' : 'text-red-200'
+              }`}>
+                {smsStatus === 'success' ? 'SOS Alert Sent!' : smsStatus === 'error' ? 'SOS Failed' : 'Emergency SOS'}
+              </p>
+              <p className="text-xs text-slate-400 font-medium mt-0.5">
+                {smsStatus === 'sending' 
+                  ? 'Sending alert...' 
+                  : smsStatus === 'success'
+                  ? 'Caregiver has been notified'
+                  : smsStatus === 'error'
+                  ? 'Please try again'
+                  : 'Alert your caregiver immediately'
+                }
+              </p>
             </div>
           </div>
           
           <motion.button 
-            whileHover={{scale:1.05}} 
-            whileTap={{scale:0.95}}
-            onClick={()=>{callCaregiver();sendLocation();}}
-            className="relative px-6 py-3 rounded-2xl bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-sm font-black text-white shadow-2xl shadow-red-500/40 transition-all flex items-center gap-2.5 group-hover:shadow-red-500/60"
+            whileHover={{scale: sendingSMS ? 1 : 1.05}} 
+            whileTap={{scale: sendingSMS ? 1 : 0.95}}
+            onClick={handleSOSClick}
+            disabled={sendingSMS}
+            className={`relative px-6 py-3 rounded-2xl text-sm font-black text-white shadow-2xl transition-all flex items-center gap-2.5 ${
+              sendingSMS
+                ? 'bg-gradient-to-r from-slate-500 to-slate-600 cursor-not-allowed opacity-70'
+                : smsStatus === 'success'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-emerald-500/40 group-hover:shadow-emerald-500/60'
+                : 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 shadow-red-500/40 group-hover:shadow-red-500/60'
+            }`}
           >
-            <Phone className="w-4 h-4"/> 
-            <span>SOS</span>
+            {sendingSMS ? (
+              <>
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
+                />
+                <span>Sending...</span>
+              </>
+            ) : (
+              <>
+                <Phone className="w-4 h-4"/> 
+                <span>SOS</span>
+              </>
+            )}
           </motion.button>
         </motion.div>
 
@@ -622,6 +754,7 @@ export default function PatientDashboard() {
         }}
         onSendLocation={sendLocation}
         onCallCaregiver={callCaregiver}
+        onSendSOS={handleSOSClick}
         onLogActivity={logActivity}
         onNavigate={(path) => router.push(path)}
         onShowReminders={() => router.push('/patient/reminders')}
